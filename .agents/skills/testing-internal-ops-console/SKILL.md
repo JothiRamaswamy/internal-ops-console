@@ -5,11 +5,11 @@ description: How to set up, run, and E2E-test the internal-ops-console monorepo 
 
 # Internal Operations Console — testing guide
 
-Monorepo at repo root: `backend/` (FastAPI :8000), `frontend/` (Vite/React :5173), Postgres 16 via Docker :5432.
+Monorepo at repo root: `backend/` (FastAPI :8000), `frontend/` (Vite/React :5173), local Postgres 16 :5432.
 
 ## Setup
 ```bash
-docker compose up -d                       # Postgres
+# Ensure local Postgres is running and the db exists: createdb internal_ops
 cd backend && python -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
 alembic upgrade head && python -m app.seed  # seed is idempotent/deterministic

@@ -27,7 +27,6 @@ Monorepo with a clean separation of concerns:
 internal-ops-console/
 ├── backend/     FastAPI + SQLAlchemy 2 + Alembic (Python 3.10+)
 ├── frontend/    React + Vite + TypeScript + Tailwind
-├── docker-compose.yml   PostgreSQL 16
 └── .env.example
 ```
 
@@ -41,18 +40,24 @@ internal-ops-console/
 
 | Area | Choice |
 | --- | --- |
-| DB | PostgreSQL 16 (Docker) |
+| DB | PostgreSQL 16 (local install) |
 | Backend | FastAPI, SQLAlchemy 2, Alembic, Pydantic v2 |
 | Frontend | React 18, Vite 5, TypeScript, Tailwind, TanStack Query |
 | Tests | pytest (backend), tsc/eslint (frontend) |
 
 ## Quick start
 
-Prerequisites: Docker, Python 3.10+, Node 18+.
+Prerequisites: PostgreSQL 16, Python 3.10+, Node 18+ (all installed locally — no
+Docker required).
 
 ```bash
-# 1. Start Postgres
-docker compose up -d
+# 1. Create the database (Postgres must be running locally)
+#    macOS (Homebrew):  brew install postgresql@16 && brew services start postgresql@16
+#    Ubuntu/Debian:     sudo apt install postgresql && sudo service postgresql start
+createdb internal_ops
+# Ensure a `postgres` role with password `postgres` exists (matches .env.example),
+# or edit DATABASE_URL in .env to match your local Postgres credentials:
+psql -d postgres -c "ALTER USER postgres WITH PASSWORD 'postgres';" 2>/dev/null || true
 
 # 2. Backend (see backend/README.md for details)
 cd backend

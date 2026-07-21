@@ -6,7 +6,15 @@ FastAPI + SQLAlchemy 2 + Alembic. All business rules live in the service layer
 ## Requirements
 
 - Python 3.10+
-- PostgreSQL 16 (via the repo's `docker compose up -d`)
+- PostgreSQL 16 running locally (no Docker required)
+
+Install and start Postgres, then create the database:
+
+```bash
+# macOS (Homebrew):  brew install postgresql@16 && brew services start postgresql@16
+# Ubuntu/Debian:     sudo apt install postgresql && sudo service postgresql start
+createdb internal_ops
+```
 
 ## Setup
 
@@ -18,7 +26,8 @@ pip install -r requirements.txt
 ```
 
 Configuration is read from a `.env` file at the repo root (see `../.env.example`).
-The defaults point at the Dockerized Postgres and work with no edits:
+The defaults assume a local Postgres with a `postgres`/`postgres` role; edit
+`DATABASE_URL` to match your own credentials if they differ:
 
 ```
 DATABASE_URL=postgresql+psycopg2://postgres:postgres@localhost:5432/internal_ops
@@ -30,7 +39,7 @@ CORS_ORIGINS=http://localhost:5173
 ## Database
 
 ```bash
-# from repo root: docker compose up -d
+# ensure the local Postgres is running and `internal_ops` exists (createdb internal_ops)
 alembic upgrade head        # apply migrations
 python -m app.seed          # load deterministic demo data (idempotent reset)
 ```
