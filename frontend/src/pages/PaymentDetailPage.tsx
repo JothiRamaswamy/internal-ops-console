@@ -246,7 +246,12 @@ export function PaymentDetailPage() {
             </button>
             <button
               className="btn-primary"
-              disabled={refund.isPending || amountMinor <= 0 || amountMinor > remaining}
+              disabled={
+                refund.isPending ||
+                amountMinor <= 0 ||
+                amountMinor > remaining ||
+                (limit !== null && amountMinor > limit)
+              }
               onClick={() =>
                 refund.mutate({
                   amount_minor: amountMinor,

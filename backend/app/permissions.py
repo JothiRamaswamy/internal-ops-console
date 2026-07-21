@@ -45,6 +45,7 @@ ROLE_PERMISSIONS: dict[UserRole, set[Permission]] = {
         "audit:read",
     },
     UserRole.SUPPORT_AGENT: {
+        "kyc:read",
         "refund:read",
         "refund:create",
         "feature_flag:read",
