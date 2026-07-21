@@ -9,7 +9,6 @@ from app.models.feature_flag import (
     FeatureFlagVersion,
 )
 from app.models.audit import AuditEvent
-from app.models.webhook import ProcessedWebhookEvent
 from app.models.integrations import (
     IntegrationPersonaInquiry,
     IntegrationStripeCharge,
@@ -28,7 +27,6 @@ __all__ = [
     "FeatureFlagValue",
     "FeatureFlagVersion",
     "AuditEvent",
-    "ProcessedWebhookEvent",
     "IntegrationPersonaInquiry",
     "IntegrationStripeCharge",
     "IntegrationLaunchDarklyFlag",

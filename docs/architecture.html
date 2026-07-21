@@ -119,26 +119,30 @@ flowchart TB
     RQ -->|"/api/* · fetch, cookie session"| API
 
     subgraph Backend["Python backend — FastAPI"]
-        API["Routers (thin)\nauth · kyc · refunds · feature-flags · audit · overview · integrations · webhooks"]
+        API["Routers (thin)\nauth · kyc · refunds · feature-flags · audit · overview · integrations"]
         AUTH["Auth + RBAC\nsigned cookie · permissions.py"]
         SVC["Service / domain layer\n(all business rules + state machines)"]
         AUD["Audit service\n(immutable events)"]
+        SYNC["Sync / ETL layer\nsync_service (normalize)"]
         PROV["Provider adapters\n(interface + mock impls)"]
         API --> AUTH --> SVC
         SVC --> AUD
         SVC --> PROV
+        API -.->|"POST /integrations/sync"| SYNC
     end
 
     SVC -->|"SQLAlchemy 2 / psycopg2"| DB
     AUD --> DB
 
     subgraph Data["PostgreSQL 16"]
-        DB[("Domain tables\nusers · customers · kyc_cases · payments · refunds\nfeature_flags(+values,+versions) · audit_events")]
-        INT[("Mock integration tables\nintegration_persona_inquiries\nintegration_stripe_charges\nintegration_launchdarkly_flags")]
+        INT[("Integration source tables\nintegration_persona_inquiries\nintegration_stripe_charges\nintegration_launchdarkly_flags")]
+        DB[("Normalized domain tables\nusers · customers · kyc_cases(+events) · payments · refunds\nfeature_flags(+values,+versions) · audit_events")]
     end
 
-    PROV -.->|"today: read seeded mock data"| INT
-    PROV -.->|"prod: swap in real vendor APIs"| EXT["External vendors\nPersona · Stripe · LaunchDarkly / Adyen"]
+    EXT["External vendors\nPersona · Stripe · LaunchDarkly / Adyen"] -.->|"inbound pull (prod)\ntoday: seeded"| INT
+    INT -->|"read raw rows"| SYNC
+    SYNC -->|"normalize → upsert (idempotent)"| DB
+    SVC -.->|"outbound: refund / request-info (write-back)"| EXT
 
     classDef ext fill:#fff7ed,stroke:#d97706,color:#7c2d12;
     classDef db fill:#eff6ff,stroke:#2563eb,color:#1e3a8a;
@@ -147,11 +151,15 @@ flowchart TB
           </pre>
         </div>
         <p class="muted">
-          Request path: the SPA calls <code>/api/*</code> with a cookie session →
-          a thin router authenticates and checks permissions → the service layer
-          runs the business rule inside a DB transaction, writes an audit event,
-          and (for KYC/refunds) calls a provider adapter. All rules live on the
-          server; the UI only mirrors permissions for UX.
+          Two flows. <b>Command path:</b> the SPA calls <code>/api/*</code> with a
+          cookie session → a thin router authenticates and checks permissions →
+          the service layer runs the business rule inside a DB transaction, writes
+          an audit event, and (for KYC/refunds) calls a provider adapter to
+          <em>write back</em> to the vendor. <b>Sync path (inbound):</b> vendor data
+          lands in the read-only <code>integration_*</code> source tables, and the
+          sync/ETL layer normalizes those raw rows into the domain tables — an
+          idempotent upsert that never overwrites operator-owned state. All rules
+          live on the server; the UI only mirrors permissions for UX.
         </p>
       </section>
 
@@ -184,6 +192,58 @@ sequenceDiagram
     end
           </pre>
         </div>
+      </section>
+
+      <section>
+        <h2>Data flow — vendor → staging → normalized domain</h2>
+        <p class="muted">
+          Vendor data is never used raw. It lands in a <b>staging</b> table
+          (<code>integration_*</code>), and a <b>sync/ETL</b> step
+          (<code>app/services/sync_service.py</code>) normalizes those rows into
+          the domain tables the app actually runs on. The transform is idempotent
+          (upsert by natural key) so it can be re-run for backfills and
+          reconciliation, and it never overwrites operator-owned state.
+        </p>
+        <div class="card diagram">
+          <pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant V as Vendor (Persona / Stripe)
+    participant ST as integration_* (staging)
+    participant SY as sync_service (ETL)
+    participant AD as Provider adapter (map_*)
+    participant D as Domain tables
+    V->>ST: raw records (batch pull; seeded here)
+    Note over ST: read-only mirror,<br/>full raw jsonb kept
+    SY->>ST: read raw rows
+    SY->>AD: normalize (status→enum, score→risk band)
+    SY->>D: resolve customer (by email) + upsert by natural key
+    alt new record
+        D-->>SY: insert kyc_case / payment (+ create events)
+    else existing & operator-owned (decided / refunded)
+        SY-->>SY: skip (human decision wins)
+    else existing & vendor status changed
+        D-->>SY: advance status + append KYC_VENDOR_SYNCED event
+    end
+          </pre>
+        </div>
+        <p class="muted">
+          <b>What gets normalized &amp; why:</b> vendor status strings →
+          canonical <code>KycStatus</code>/<code>PaymentStatus</code> enums (one
+          vocabulary for the state machine + RBAC); raw 0-100 risk score →
+          <code>risk_level</code> band (stable triage); money → integer minor
+          units + single currency; the vendor inquiry is resolved to <em>our</em>
+          <code>customer</code> by email; identifiers (<code>vendor</code>,
+          <code>vendor_reference_id</code>, <code>provider_payment_id</code>) are
+          kept for provenance, and the original JSON stays in
+          <code>raw_vendor_payload</code>/<code>raw</code> for audit and
+          re-normalization. Vendor states only ever reach
+          <code>NEEDS_REVIEW</code> — the <code>APPROVED</code>/<code>REJECTED</code>
+          decision is made by a reviewer inside the console. Ingestion is
+          <b>sync-only</b> (no inbound webhooks); write-backs (issuing a refund,
+          requesting more info) go outbound to the vendor via an adapter and are
+          reconciled by the next sync.
+        </p>
       </section>
 
       <section>
@@ -260,14 +320,18 @@ sequenceDiagram
         </div>
 
         <div class="decision">
-          <h3>Integrations as mock tables behind an adapter interface</h3>
+          <h3>Sync/ETL ingestion (staging tables), not webhooks</h3>
           <div class="why">
-            Vendor data (Persona, Stripe, LaunchDarkly) is seeded into
-            <code>integration_*</code> tables read through provider adapters.
-            <span class="tag-alt">Why:</span> the app runs with zero external
-            credentials, and going live is an adapter implementation, not a
-            rewrite. <span class="tag-alt">Tradeoff:</span> data is a snapshot, not
-            a live sync, in this prototype.
+            Vendor data lands in <code>integration_*</code> staging tables and a
+            sync step (<code>sync_service</code>) normalizes it into the domain
+            tables; idempotent upsert by natural key.
+            <span class="tag-alt">Why over webhooks:</span> the full table can be
+            re-run for backfill/reconciliation, raw payloads are durable and
+            inspectable, dedupe is trivial, and there's no inbound endpoint to
+            secure — webhooks drop/duplicate events and only cover "after you
+            subscribed." <span class="tag-alt">Tradeoff:</span> latency (batch vs.
+            real-time); acceptable for KYC/refund review, and production would run
+            it on a schedule (often with webhooks as a low-latency trigger).
           </div>
         </div>
 
@@ -299,8 +363,9 @@ sequenceDiagram
           PostgreSQL 16, managed with Alembic migrations. Every table has a
           string <code>id</code> primary key; most carry <code>created_at</code>/
           <code>updated_at</code> timestamps. Money is stored as integer minor
-          units (cents). The <b>domain tables</b> hold the app's own state; the
-          <b>integration tables</b> are read-only mock mirrors of vendor data.
+          units (cents). The <b>integration tables</b> are the read-only staging
+          source (raw vendor mirrors); the <b>domain tables</b> hold the
+          normalized state the app runs on, produced by the sync/ETL layer.
         </p>
         <div class="card diagram">
           <pre class="mermaid">
@@ -467,20 +532,16 @@ erDiagram
                 <td>Cross-cutting immutable audit trail.</td>
                 <td><code>action</code>, <code>entity_type</code>/<code>entity_id</code>, JSONB <code>before</code>/<code>after</code>, <code>ip_address</code>. Written for every KYC/refund/flag mutation.</td>
               </tr>
-              <tr>
-                <td><code>processed_webhook_events</code></td>
-                <td>Webhook idempotency ledger.</td>
-                <td>Unique <code>event_id</code> per <code>source</code> so a replayed webhook is processed once.</td>
-              </tr>
             </tbody>
           </table>
         </div>
 
-        <h3>Integration tables (mock vendor mirrors)</h3>
+        <h3>Integration tables (staging source — raw vendor mirrors)</h3>
         <p class="muted">
-          Standalone, read-only tables seeded to represent data that would sync
-          from external vendors. Each keeps a raw <code>jsonb</code> payload so
-          adapters can evolve without schema churn; not foreign-keyed to the
+          Read-only staging tables holding raw vendor records (seeded here; a
+          batch pull in production). The sync/ETL layer reads them and normalizes
+          into the domain tables. Each keeps a raw <code>jsonb</code> payload so
+          the transform can evolve without schema churn; not foreign-keyed to the
           domain tables (they model an external source of truth).
         </p>
         <div class="card" style="overflow-x:auto">
@@ -533,7 +594,7 @@ erDiagram
             <ul>
               <li>SSO/SAML + real user provisioning</li>
               <li>Real vendor adapters + secret management</li>
-              <li>Webhook signature verification &amp; retries</li>
+              <li>Scheduled sync + outbox for write-backs &amp; divergence alerts</li>
             </ul>
           </div>
           <div class="card">

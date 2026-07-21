@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.deps import get_current_user
+from app.errors import AppError
+from app.models.enums import UserRole
 from app.models.integrations import (
     IntegrationLaunchDarklyFlag,
     IntegrationPersonaInquiry,
@@ -17,8 +19,37 @@ from app.models.integrations import (
 )
 from app.models.user import User
 from app.serializers import iso
+from app.services import sync_service
+from app.services.audit_service import record_audit
 
 router = APIRouter(prefix="/api/integrations", tags=["integrations"])
+
+# Roles allowed to trigger a manual inbound sync.
+SYNC_ROLES = {UserRole.ADMIN, UserRole.OPS_REVIEWER}
+
+
+@router.post("/sync")
+def trigger_sync(
+    db: Session = Depends(get_db), user: User = Depends(get_current_user)
+) -> dict:
+    """Run the inbound sync/ETL: integration_* source tables -> domain tables."""
+    if user.role not in SYNC_ROLES:
+        raise AppError(
+            "FORBIDDEN",
+            "You do not have permission to run an integration sync.",
+            {"role": user.role.value},
+        )
+    result = sync_service.sync_all(db)
+    record_audit(
+        db,
+        actor_id=user.id,
+        action="INTEGRATION_SYNCED",
+        entity_type="Integration",
+        entity_id="all",
+        after=result,
+    )
+    db.commit()
+    return {"result": result}
 
 
 @router.get("")

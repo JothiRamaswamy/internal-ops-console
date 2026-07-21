@@ -2,12 +2,19 @@
 
 Run with:  python -m app.seed
 A fixed RNG seed keeps screenshots and tests stable.
+
+The seed models the real data flow: it populates the `integration_*` source
+tables (the raw vendor mirrors), then runs the sync/ETL layer to normalize them
+into the domain tables (`kyc_cases` + events, `payments`). Operator-owned data —
+KYC review decisions and in-console refunds — is layered on *after* the sync,
+because it originates inside the console rather than from a vendor. Feature flags
+are console-owned too; LaunchDarkly is seeded only as a read-only mirror.
 """
 
 import random
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import delete
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.db import SessionLocal, engine
@@ -24,7 +31,6 @@ from app.models import (
     KycCase,
     KycCaseEvent,
     Payment,
-    ProcessedWebhookEvent,
     Refund,
     User,
 )
@@ -32,14 +38,13 @@ from app.models.enums import (
     FeatureFlagEnvironment,
     FeatureFlagType,
     KycStatus,
-    KycVendor,
-    PaymentProvider,
     PaymentStatus,
     RefundReason,
     RefundStatus,
     RiskLevel,
     UserRole,
 )
+from app.services import sync_service
 
 RNG = random.Random(42)
 NOW = datetime(2026, 7, 21, 12, 0, 0, tzinfo=timezone.utc)
@@ -67,7 +72,7 @@ def _dt(days_ago: float) -> datetime:
 def clear(db: Session) -> None:
     for model in (
         AuditEvent, KycCaseEvent, KycCase, Refund, Payment,
-        FeatureFlagVersion, FeatureFlagValue, FeatureFlag, ProcessedWebhookEvent,
+        FeatureFlagVersion, FeatureFlagValue, FeatureFlag,
         IntegrationPersonaInquiry, IntegrationStripeCharge,
         IntegrationLaunchDarklyFlag, Customer, User,
     ):
@@ -113,201 +118,238 @@ def seed_customers(db: Session) -> list[Customer]:
     return customers
 
 
-def seed_kyc(db: Session, customers, users) -> list[KycCase]:
-    vendors = [KycVendor.PERSONA, KycVendor.STRIPE_IDENTITY, KycVendor.MOCK_VENDOR]
-    reviewers = [users["ADMIN"], users["OPS_REVIEWER"]]
+# --- Integration SOURCE tables (raw vendor mirrors) ---------------------------
 
-    # Distribution: ensure at least 8 needs_review, 4 high/critical.
-    statuses = (
-        [KycStatus.NEEDS_REVIEW] * 10
-        + [KycStatus.PENDING_VENDOR] * 4
-        + [KycStatus.REQUESTED_MORE_INFO] * 3
-        + [KycStatus.APPROVED] * 8
-        + [KycStatus.REJECTED] * 7
-    )
-    RNG.shuffle(statuses)
+def seed_persona_source(db: Session, customers) -> None:
+    """Seed Persona inquiries — the raw KYC vendor source the sync reads from."""
+    # "completed" -> NEEDS_REVIEW, "pending" -> PENDING_VENDOR (vendor still working).
+    source_statuses = ["completed"] * 24 + ["pending"] * 8
+    RNG.shuffle(source_statuses)
 
-    cases: list[KycCase] = []
-    for i, status in enumerate(statuses):
+    for i, status in enumerate(source_statuses):
         customer = RNG.choice(customers)
         risk = RNG.choices(
             [RiskLevel.LOW, RiskLevel.MEDIUM, RiskLevel.HIGH, RiskLevel.CRITICAL],
             weights=[40, 35, 18, 7],
         )[0]
-        vendor = RNG.choice(vendors)
-        submitted = _dt(RNG.uniform(0.2, 40))
-        assigned = None
-        if status in (KycStatus.NEEDS_REVIEW, KycStatus.REQUESTED_MORE_INFO):
-            assigned = RNG.choice([None, *reviewers])
         risk_score = {
             RiskLevel.LOW: RNG.randint(0, 30),
             RiskLevel.MEDIUM: RNG.randint(31, 60),
             RiskLevel.HIGH: RNG.randint(61, 85),
             RiskLevel.CRITICAL: RNG.randint(86, 100),
         }[risk]
-        case = KycCase(
-            id=f"kyc_{i:03d}",
-            customer_id=customer.id,
-            vendor=vendor,
-            vendor_reference_id=f"{vendor.value.lower()}_ref_{i:04d}",
-            status=status,
-            risk_level=risk,
-            risk_score=risk_score,
-            country_code=customer.country_code,
-            submitted_at=submitted,
-            assigned_reviewer_id=assigned.id if assigned else None,
-            raw_vendor_payload={
-                "vendor": vendor.value,
-                "reference_id": f"{vendor.value.lower()}_ref_{i:04d}",
+        submitted = _dt(RNG.uniform(0.2, 40))
+        raw = {
+            "id": f"inq_{i:04d}",
+            "status": status,
+            "reference_id": f"persona_ref_{i:04d}",
+            "attributes": {
                 "checks": {
-                    "document": "passed" if risk_score < 80 else "failed",
-                    "selfie": "passed" if risk_score < 90 else "review",
+                    "government_id": "passed" if risk_score < 80 else "failed",
+                    "selfie": "passed" if risk_score < 90 else "requires_review",
                     "watchlist": "clear" if risk != RiskLevel.CRITICAL else "hit",
-                    "address": "passed",
+                    "database": "passed",
                 },
                 "risk_score": risk_score,
             },
-        )
-        if status in (KycStatus.APPROVED, KycStatus.REJECTED):
-            reviewer = RNG.choice(reviewers)
-            case.decided_by_id = reviewer.id
-            case.assigned_reviewer_id = reviewer.id
-            case.decided_at = submitted + timedelta(hours=RNG.randint(1, 72))
-            if status == KycStatus.REJECTED:
-                case.decision_reason = RNG.choice(
-                    ["IDENTITY_MISMATCH", "SUSPECTED_FRAUD", "WATCHLIST_MATCH",
-                     "DOCUMENT_UNVERIFIABLE"]
-                )
-                case.decision_note = "Automated seed rejection."
-            else:
-                case.decision_note = "Verified during seed."
-        db.add(case)
-        db.flush()
-
-        # Event history.
-        db.add(KycCaseEvent(
-            kyc_case_id=case.id, event_type="KYC_CASE_CREATED",
-            from_status=None, to_status=KycStatus.PENDING_VENDOR,
-            created_at=submitted,
+        }
+        db.add(IntegrationPersonaInquiry(
+            inquiry_id=f"inq_{i:04d}",
+            reference_id=f"persona_ref_{i:04d}",
+            status=status,
+            name_first=customer.first_name,
+            name_last=customer.last_name,
+            email_address=customer.email,
+            country_code=customer.country_code,
+            risk_score=risk_score,
+            created_at_source=submitted,
+            raw=raw,
         ))
-        if status != KycStatus.PENDING_VENDOR:
-            db.add(KycCaseEvent(
-                kyc_case_id=case.id, event_type="KYC_VENDOR_COMPLETED",
-                from_status=KycStatus.PENDING_VENDOR, to_status=KycStatus.NEEDS_REVIEW,
-                created_at=submitted + timedelta(minutes=30),
-            ))
-        if status == KycStatus.APPROVED:
-            db.add(KycCaseEvent(
-                kyc_case_id=case.id, actor_id=case.decided_by_id,
-                event_type="KYC_CASE_APPROVED",
-                from_status=KycStatus.NEEDS_REVIEW, to_status=KycStatus.APPROVED,
-                created_at=case.decided_at,
-            ))
-            db.add(AuditEvent(
-                actor_id=case.decided_by_id, action="KYC_CASE_APPROVED",
-                entity_type="KycCase", entity_id=case.id,
-                after={"status": "APPROVED"}, created_at=case.decided_at,
-            ))
-        elif status == KycStatus.REJECTED:
-            db.add(KycCaseEvent(
-                kyc_case_id=case.id, actor_id=case.decided_by_id,
-                event_type="KYC_CASE_REJECTED",
-                from_status=KycStatus.NEEDS_REVIEW, to_status=KycStatus.REJECTED,
-                event_metadata={"reason": case.decision_reason},
-                created_at=case.decided_at,
-            ))
-            db.add(AuditEvent(
-                actor_id=case.decided_by_id, action="KYC_CASE_REJECTED",
-                entity_type="KycCase", entity_id=case.id,
-                after={"status": "REJECTED", "reason": case.decision_reason},
-                created_at=case.decided_at,
-            ))
-        cases.append(case)
     db.commit()
-    return cases
 
 
-def seed_payments(db: Session, customers, users) -> list[Payment]:
-    providers = [PaymentProvider.STRIPE, PaymentProvider.ADYEN,
-                 PaymentProvider.MOCK_PROVIDER]
-    payments: list[Payment] = []
+def seed_stripe_source(db: Session, customers) -> None:
+    """Seed Stripe charges — the raw payments vendor source the sync reads from."""
     for i in range(44):
         customer = RNG.choice(customers)
-        provider = RNG.choice(providers)
         amount = RNG.choice([1999, 4999, 9900, 12500, 25000, 45000, 199900, 250000])
         created = _dt(RNG.uniform(0.1, 60))
-        # One deterministic provider-failure payment.
-        provider_pid = f"pi_{provider.value.lower()}_{i:04d}"
-        if i == 7:
-            provider_pid = "pi_mock_0007_FAIL"
-            provider = PaymentProvider.MOCK_PROVIDER
-        p = Payment(
-            id=f"pay_{i:03d}",
-            provider=provider,
-            provider_payment_id=provider_pid,
-            customer_id=customer.id,
-            order_id=f"ORD-{10000 + i}",
-            amount_minor=amount,
-            currency="USD" if i % 8 else RNG.choice(["EUR", "GBP"]),
-            status=PaymentStatus.SUCCEEDED,
-            payment_method_brand=RNG.choice(CARD_BRANDS),
-            payment_method_last4=f"{RNG.randint(0, 9999):04d}",
-            created_at=created,
-        )
-        db.add(p)
-        db.flush()
-        payments.append(p)
-
-        roll = RNG.random()
+        currency = "usd" if i % 8 else RNG.choice(["eur", "gbp"])
+        status = "succeeded"
         if i in (2, 5):
-            p.status = PaymentStatus.DISPUTED
+            status = "disputed"
         elif i in (3, 9):
-            p.status = PaymentStatus.FAILED
-        elif roll < 0.25:
-            # Partial refund.
-            r_amt = amount // RNG.choice([2, 3, 4])
-            r = Refund(
-                payment_id=p.id, amount_minor=r_amt, currency=p.currency,
-                reason=RNG.choice(list(RefundReason)), status=RefundStatus.SUCCEEDED,
-                requested_by_id=users["SUPPORT_AGENT"].id
-                if r_amt <= 25000 else users["OPS_REVIEWER"].id,
-                idempotency_key=f"seed-refund-{i}-a",
-                provider_refund_id=f"re_seed_{i}a",
-                created_at=created + timedelta(days=1),
-            )
-            db.add(r)
-            p.status = PaymentStatus.PARTIALLY_REFUNDED
-            db.add(AuditEvent(
-                actor_id=r.requested_by_id, action="REFUND_SUCCEEDED",
-                entity_type="Refund", entity_id=f"pay_{i:03d}",
-                after={"amount_minor": r_amt}, created_at=r.created_at,
+            status = "failed"
+        # One charge whose provider id ends in FAIL: the mock refund provider
+        # will decline refunds against it (used to demo failed refunds).
+        payment_intent = f"pi_stripe_{i:04d}"
+        if i == 7:
+            payment_intent = "pi_stripe_0007_FAIL"
+        brand = RNG.choice(CARD_BRANDS)
+        last4 = f"{RNG.randint(0, 9999):04d}"
+        db.add(IntegrationStripeCharge(
+            charge_id=f"ch_{i:04d}",
+            payment_intent=payment_intent,
+            amount=amount,
+            amount_refunded=0,
+            currency=currency,
+            status=status,
+            customer_email=customer.email,
+            card_brand=brand,
+            card_last4=last4,
+            created_at_source=created,
+            raw={
+                "id": f"ch_{i:04d}", "object": "charge", "amount": amount,
+                "currency": currency, "status": status,
+                "payment_intent": payment_intent,
+                "payment_method_details": {"card": {"brand": brand, "last4": last4}},
+                "metadata": {"order_id": f"ORD-{10000 + i}"},
+            },
+        ))
+    db.commit()
+
+
+def seed_launchdarkly_source(db: Session) -> None:
+    """Seed LaunchDarkly flags as a read-only mirror (not synced into domain)."""
+    for _i, (key, desc, owner, tags) in enumerate(FLAG_SPECS):
+        db.add(IntegrationLaunchDarklyFlag(
+            flag_key=key,
+            name=desc,
+            kind="boolean",
+            temporary=("beta" in tags or "deprecated" in tags),
+            maintainer=f"{owner}@example.com",
+            tags={"tags": tags},
+            environments={
+                "production": {"on": RNG.random() < 0.4},
+                "staging": {"on": RNG.random() < 0.5},
+            },
+            raw={"key": key, "name": desc},
+        ))
+    db.commit()
+
+
+# --- Operator-owned data (layered on AFTER the sync) --------------------------
+
+def seed_kyc_decisions(db: Session, users) -> None:
+    """Simulate historical reviewer decisions on synced NEEDS_REVIEW cases."""
+    reviewers = [users["ADMIN"], users["OPS_REVIEWER"]]
+    cases = db.scalars(
+        select(KycCase)
+        .where(KycCase.status == KycStatus.NEEDS_REVIEW)
+        .order_by(KycCase.vendor_reference_id)
+    ).all()
+    # Decide a deterministic subset; the rest stay in the review queue.
+    plan = ["approve"] * 8 + ["reject"] * 5 + ["more_info"] * 2
+    for case, action in zip(cases, plan):
+        reviewer = RNG.choice(reviewers)
+        decided_at = case.submitted_at + timedelta(hours=RNG.randint(1, 72))
+        case.assigned_reviewer_id = reviewer.id
+        if action == "approve":
+            case.status = KycStatus.APPROVED
+            case.decided_by_id = reviewer.id
+            case.decided_at = decided_at
+            case.decision_note = "Verified during review."
+            db.add(KycCaseEvent(
+                kyc_case_id=case.id, actor_id=reviewer.id,
+                event_type="KYC_CASE_APPROVED",
+                from_status=KycStatus.NEEDS_REVIEW, to_status=KycStatus.APPROVED,
+                created_at=decided_at,
             ))
-        elif roll < 0.35:
+            db.add(AuditEvent(
+                actor_id=reviewer.id, action="KYC_CASE_APPROVED",
+                entity_type="KycCase", entity_id=case.id,
+                after={"status": "APPROVED"}, created_at=decided_at,
+            ))
+        elif action == "reject":
+            reason = RNG.choice(
+                ["IDENTITY_MISMATCH", "SUSPECTED_FRAUD", "WATCHLIST_MATCH",
+                 "DOCUMENT_UNVERIFIABLE"]
+            )
+            case.status = KycStatus.REJECTED
+            case.decided_by_id = reviewer.id
+            case.decided_at = decided_at
+            case.decision_reason = reason
+            case.decision_note = "Rejected during review."
+            db.add(KycCaseEvent(
+                kyc_case_id=case.id, actor_id=reviewer.id,
+                event_type="KYC_CASE_REJECTED",
+                from_status=KycStatus.NEEDS_REVIEW, to_status=KycStatus.REJECTED,
+                event_metadata={"reason": reason}, created_at=decided_at,
+            ))
+            db.add(AuditEvent(
+                actor_id=reviewer.id, action="KYC_CASE_REJECTED",
+                entity_type="KycCase", entity_id=case.id,
+                after={"status": "REJECTED", "reason": reason},
+                created_at=decided_at,
+            ))
+        else:  # more_info
+            case.status = KycStatus.REQUESTED_MORE_INFO
+            db.add(KycCaseEvent(
+                kyc_case_id=case.id, actor_id=reviewer.id,
+                event_type="KYC_MORE_INFO_REQUESTED",
+                from_status=KycStatus.NEEDS_REVIEW,
+                to_status=KycStatus.REQUESTED_MORE_INFO,
+                created_at=decided_at,
+            ))
+    db.commit()
+
+
+def seed_refunds(db: Session, users) -> None:
+    """Create in-console refunds against synced, succeeded payments."""
+    payments = db.scalars(
+        select(Payment)
+        .where(Payment.status == PaymentStatus.SUCCEEDED)
+        .order_by(Payment.provider_payment_id)
+    ).all()
+    for i, p in enumerate(payments):
+        if p.provider_payment_id.endswith("FAIL"):
+            # A refund attempt the provider declined — no balance consumed.
+            db.add(Refund(
+                payment_id=p.id, amount_minor=min(p.amount_minor, 5000),
+                currency=p.currency, reason=RefundReason.CUSTOMER_REQUEST,
+                status=RefundStatus.FAILED,
+                failure_reason="Provider declined the refund (simulated failure).",
+                requested_by_id=users["SUPPORT_AGENT"].id,
+                idempotency_key=f"seed-refund-{i}-failed",
+                created_at=p.created_at + timedelta(days=1),
+            ))
+            continue
+        if i % 5 == 0:
             # Full refund.
-            r = Refund(
-                payment_id=p.id, amount_minor=amount, currency=p.currency,
+            db.add(Refund(
+                payment_id=p.id, amount_minor=p.amount_minor, currency=p.currency,
                 reason=RefundReason.DUPLICATE_CHARGE, status=RefundStatus.SUCCEEDED,
                 requested_by_id=users["ADMIN"].id,
                 idempotency_key=f"seed-refund-{i}-full",
                 provider_refund_id=f"re_seed_{i}f",
-                created_at=created + timedelta(days=1),
-            )
-            db.add(r)
+                created_at=p.created_at + timedelta(days=1),
+            ))
             p.status = PaymentStatus.FULLY_REFUNDED
-        elif roll < 0.42:
-            # A failed refund on the deterministic-failure payment.
-            r = Refund(
-                payment_id=p.id, amount_minor=min(amount, 5000), currency=p.currency,
-                reason=RefundReason.CUSTOMER_REQUEST, status=RefundStatus.FAILED,
-                failure_reason="Provider declined the refund (simulated failure).",
-                requested_by_id=users["SUPPORT_AGENT"].id,
-                idempotency_key=f"seed-refund-{i}-failed",
-                created_at=created + timedelta(days=1),
-            )
-            db.add(r)
+        elif i % 3 == 0:
+            # Partial refund.
+            r_amt = p.amount_minor // RNG.choice([2, 3, 4])
+            db.add(Refund(
+                payment_id=p.id, amount_minor=r_amt, currency=p.currency,
+                reason=RNG.choice(list(RefundReason)), status=RefundStatus.SUCCEEDED,
+                requested_by_id=(
+                    users["SUPPORT_AGENT"].id if r_amt <= 25000
+                    else users["OPS_REVIEWER"].id
+                ),
+                idempotency_key=f"seed-refund-{i}-a",
+                provider_refund_id=f"re_seed_{i}a",
+                created_at=p.created_at + timedelta(days=1),
+            ))
+            p.status = PaymentStatus.PARTIALLY_REFUNDED
+            db.add(AuditEvent(
+                actor_id=users["SUPPORT_AGENT"].id, action="REFUND_SUCCEEDED",
+                entity_type="Refund", entity_id=p.id,
+                after={"amount_minor": r_amt},
+                created_at=p.created_at + timedelta(days=1),
+            ))
     db.commit()
-    return payments
 
+
+# --- Feature flags (console-owned) --------------------------------------------
 
 FLAG_SPECS = [
     ("checkout-v2", "New checkout experience", "payments", ["checkout", "revenue"]),
@@ -411,64 +453,6 @@ def seed_flags(db: Session, users) -> None:
     db.commit()
 
 
-def seed_integrations(db: Session, customers, kyc_cases, payments) -> None:
-    # Persona inquiries mirror KYC cases from the Persona vendor.
-    for case in kyc_cases:
-        if case.vendor != KycVendor.PERSONA:
-            continue
-        cust = next((c for c in customers if c.id == case.customer_id), None)
-        db.add(IntegrationPersonaInquiry(
-            inquiry_id=f"inq_{case.id}",
-            reference_id=case.vendor_reference_id,
-            status=case.status.value.lower(),
-            name_first=cust.first_name if cust else None,
-            name_last=cust.last_name if cust else None,
-            email_address=cust.email if cust else None,
-            country_code=case.country_code,
-            risk_score=case.risk_score,
-            created_at_source=case.submitted_at,
-            raw=case.raw_vendor_payload,
-        ))
-    # Stripe charges mirror Stripe payments.
-    for p in payments:
-        if p.provider != PaymentProvider.STRIPE:
-            continue
-        cust = next((c for c in customers if c.id == p.customer_id), None)
-        refunded = sum(
-            r.amount_minor for r in p.refunds if r.status == RefundStatus.SUCCEEDED
-        )
-        db.add(IntegrationStripeCharge(
-            charge_id=f"ch_{p.id}",
-            payment_intent=p.provider_payment_id,
-            amount=p.amount_minor,
-            amount_refunded=refunded,
-            currency=p.currency.lower(),
-            status="succeeded" if p.status != PaymentStatus.FAILED else "failed",
-            customer_email=cust.email if cust else None,
-            card_brand=p.payment_method_brand,
-            card_last4=p.payment_method_last4,
-            created_at_source=p.created_at,
-            raw={"id": f"ch_{p.id}", "object": "charge",
-                 "amount": p.amount_minor, "currency": p.currency.lower()},
-        ))
-    # LaunchDarkly source flags mirror the flag catalog.
-    for i, (key, desc, owner, tags) in enumerate(FLAG_SPECS):
-        db.add(IntegrationLaunchDarklyFlag(
-            flag_key=key,
-            name=desc,
-            kind="boolean",
-            temporary=("beta" in tags or "deprecated" in tags),
-            maintainer=f"{owner}@example.com",
-            tags={"tags": tags},
-            environments={
-                "production": {"on": RNG.random() < 0.4},
-                "staging": {"on": RNG.random() < 0.5},
-            },
-            raw={"key": key, "name": desc},
-        ))
-    db.commit()
-
-
 def main() -> None:
     Base.metadata.create_all(engine)
     db = SessionLocal()
@@ -476,13 +460,23 @@ def main() -> None:
         clear(db)
         users = seed_users(db)
         customers = seed_customers(db)
-        kyc_cases = seed_kyc(db, customers, users)
-        payments = seed_payments(db, customers, users)
+        # 1. Land raw vendor records in the integration source tables.
+        seed_persona_source(db, customers)
+        seed_stripe_source(db, customers)
+        seed_launchdarkly_source(db)
+        # 2. Run the sync/ETL: integration_* -> normalized domain tables.
+        sync_summary = sync_service.sync_all(db)
+        # 3. Layer on operator-owned data that originates in the console.
+        seed_kyc_decisions(db, users)
+        seed_refunds(db, users)
         seed_flags(db, users)
-        seed_integrations(db, customers, kyc_cases, payments)
+
+        kyc_count = db.scalar(select(func.count()).select_from(KycCase))
+        pay_count = db.scalar(select(func.count()).select_from(Payment))
         print("Seed complete:")
+        print(f"  sync={sync_summary}")
         print(f"  users={len(users)} customers={len(customers)} "
-              f"kyc_cases={len(kyc_cases)} payments={len(payments)} "
+              f"kyc_cases={kyc_count} payments={pay_count} "
               f"flags={len(FLAG_SPECS)}")
     finally:
         db.close()

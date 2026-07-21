@@ -12,9 +12,11 @@ console:
 - **Feature-Flag Admin** — a mini PostHog-style panel to create flags and manage
   per-environment enable/disable, rollout percentages, and targeting filters.
 
-It also ships **mock integration tables** representing the external data sources
-this product would connect to (Persona, Stripe, LaunchDarkly), so the whole
-thing runs end-to-end with realistic seeded data and no external credentials.
+It also ships **integration source tables** representing the external data
+sources this product connects to (Persona, Stripe, LaunchDarkly). A
+**sync/ETL layer** reads those raw vendor rows and normalizes them into the
+domain tables (KYC cases + events, payments), so the whole thing runs end-to-end
+with realistic seeded data and no external credentials.
 
 > See [`RECOMMENDATION.md`](./RECOMMENDATION.md) for the build-vs-buy analysis
 > this repository was created to support.
@@ -91,7 +93,11 @@ different roles.
 Everything is real application logic (state machines, RBAC, idempotency,
 optimistic concurrency, auditing). The only mocks are the **external vendors**:
 KYC and payment providers are pluggable adapters with deterministic mock
-implementations, and the `integration_*` tables stand in for synced vendor data.
+implementations. The `integration_*` tables are the read-only staging source
+(raw vendor mirrors); the sync/ETL layer (`app/services/sync_service.py`,
+runnable via `python -m app.sync` or `POST /api/integrations/sync`) normalizes
+them into the domain tables. Ingestion is sync-only (no webhooks); write-backs
+go outbound to the vendor via an adapter and reconcile on the next sync.
 Swapping in real providers is an adapter implementation, not a rewrite.
 
 ## Testing & checks

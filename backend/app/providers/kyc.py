@@ -8,6 +8,41 @@ prototype; only `MockKycProvider` is functional.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
+from app.models.enums import KycStatus, RiskLevel
+
+# Vendor inquiry status strings -> the console's canonical KYC lifecycle.
+# The vendor only tells us how far *its* checks got; the APPROVED / REJECTED
+# decision belongs to a human reviewer inside the console, so vendor states map
+# no further than NEEDS_REVIEW.
+PERSONA_STATUS_MAP: dict[str, KycStatus] = {
+    "created": KycStatus.PENDING_VENDOR,
+    "pending": KycStatus.PENDING_VENDOR,
+    "processing": KycStatus.PENDING_VENDOR,
+    "completed": KycStatus.NEEDS_REVIEW,
+    "needs_review": KycStatus.NEEDS_REVIEW,
+    "approved": KycStatus.NEEDS_REVIEW,
+    "declined": KycStatus.NEEDS_REVIEW,
+    "failed": KycStatus.NEEDS_REVIEW,
+}
+
+
+def map_persona_status(status: str | None) -> KycStatus:
+    """Normalize a Persona inquiry status into the internal KYC status."""
+    return PERSONA_STATUS_MAP.get((status or "").lower(), KycStatus.PENDING_VENDOR)
+
+
+def risk_level_from_score(score: int | None) -> RiskLevel:
+    """Bucket a raw 0-100 vendor risk score into a stable risk band."""
+    if score is None:
+        return RiskLevel.LOW
+    if score <= 30:
+        return RiskLevel.LOW
+    if score <= 60:
+        return RiskLevel.MEDIUM
+    if score <= 85:
+        return RiskLevel.HIGH
+    return RiskLevel.CRITICAL
+
 
 @dataclass
 class NormalizedKycResult:

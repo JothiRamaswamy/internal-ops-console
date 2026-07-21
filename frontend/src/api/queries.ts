@@ -61,3 +61,14 @@ export const getStripe = () =>
   api.get<{ items: Record<string, unknown>[] }>("/integrations/stripe");
 export const getLaunchDarkly = () =>
   api.get<{ items: Record<string, unknown>[] }>("/integrations/launchdarkly");
+
+export interface SyncCounts {
+  created: number;
+  updated: number;
+  skipped: number;
+}
+export interface SyncResult {
+  result: { persona_kyc: SyncCounts; stripe_payments: SyncCounts };
+}
+export const runIntegrationSync = () =>
+  api.post<SyncResult>("/integrations/sync");
