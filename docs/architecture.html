@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Internal Operations Console — Architecture &amp; Decisions</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+      :root {
+        --bg: #f8fafc;
+        --card: #ffffff;
+        --ink: #0f172a;
+        --muted: #64748b;
+        --border: #e2e8f0;
+        --brand: #2563eb;
+        --brand-soft: #eff6ff;
+        --green: #16a34a;
+        --amber: #d97706;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Helvetica, Arial, sans-serif;
+        background: var(--bg);
+        color: var(--ink);
+        line-height: 1.55;
+      }
+      header {
+        background: linear-gradient(135deg, #1e293b, #0f172a);
+        color: #fff;
+        padding: 40px 32px;
+      }
+      header h1 { margin: 0 0 6px; font-size: 26px; }
+      header p { margin: 0; color: #cbd5e1; max-width: 760px; }
+      main { max-width: 1040px; margin: 0 auto; padding: 28px 24px 80px; }
+      section { margin-top: 36px; }
+      h2 {
+        font-size: 19px;
+        border-bottom: 2px solid var(--border);
+        padding-bottom: 8px;
+        margin-bottom: 16px;
+      }
+      h3 { font-size: 15px; margin: 20px 0 6px; }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 20px 22px;
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+      }
+      .diagram { overflow-x: auto; }
+      .grid { display: grid; gap: 16px; }
+      @media (min-width: 720px) { .grid.cols-2 { grid-template-columns: 1fr 1fr; } }
+      .pill {
+        display: inline-block;
+        font-size: 12px;
+        font-weight: 600;
+        padding: 2px 10px;
+        border-radius: 999px;
+        background: var(--brand-soft);
+        color: var(--brand);
+        margin: 0 6px 6px 0;
+      }
+      table { border-collapse: collapse; width: 100%; font-size: 14px; }
+      th, td {
+        text-align: left;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--border);
+        vertical-align: top;
+      }
+      th { background: #f1f5f9; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
+      code {
+        background: #f1f5f9;
+        padding: 1px 6px;
+        border-radius: 5px;
+        font-size: 13px;
+        font-family: "SF Mono", "Fira Code", Consolas, monospace;
+      }
+      .decision { border-left: 3px solid var(--brand); padding-left: 14px; margin: 16px 0; }
+      .decision .why { color: var(--muted); font-size: 14px; }
+      .tag-alt { color: var(--amber); }
+      .muted { color: var(--muted); }
+      ul { margin: 6px 0; padding-left: 20px; }
+      footer { color: var(--muted); font-size: 13px; margin-top: 40px; text-align: center; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Internal Operations Console — Architecture &amp; Decisions</h1>
+      <p>
+        A lightweight, in-house alternative to a Retool-style platform: one
+        console bundling the three internal apps the client actually uses (KYC
+        review, refunds, feature flags), with real business logic, server-side
+        RBAC, an immutable audit log, and mock vendor integrations.
+      </p>
+    </header>
+
+    <main>
+      <section>
+        <span class="pill">PostgreSQL 16</span>
+        <span class="pill">FastAPI · SQLAlchemy 2 · Alembic</span>
+        <span class="pill">React · Vite · TypeScript · Tailwind</span>
+        <span class="pill">TanStack Query</span>
+        <span class="pill">Monorepo</span>
+      </section>
+
+      <section>
+        <h2>System architecture</h2>
+        <div class="card diagram">
+          <pre class="mermaid">
+flowchart TB
+    subgraph Browser["Browser — React SPA (Vite + TS + Tailwind)"]
+        UI["AppShell + tabs:\nOverview · KYC · Refunds · Feature Flags · Audit · Integrations"]
+        RQ["TanStack Query\n(server cache, mutations)"]
+        UI --> RQ
+    end
+
+    RQ -->|"/api/* · fetch, cookie session"| API
+
+    subgraph Backend["Python backend — FastAPI"]
+        API["Routers (thin)\nauth · kyc · refunds · feature-flags · audit · overview · integrations · webhooks"]
+        AUTH["Auth + RBAC\nsigned cookie · permissions.py"]
+        SVC["Service / domain layer\n(all business rules + state machines)"]
+        AUD["Audit service\n(immutable events)"]
+        PROV["Provider adapters\n(interface + mock impls)"]
+        API --> AUTH --> SVC
+        SVC --> AUD
+        SVC --> PROV
+    end
+
+    SVC -->|"SQLAlchemy 2 / psycopg2"| DB
+    AUD --> DB
+
+    subgraph Data["PostgreSQL 16"]
+        DB[("Domain tables\nusers · customers · kyc_cases · payments · refunds\nfeature_flags(+values,+versions) · audit_events")]
+        INT[("Mock integration tables\nintegration_persona_inquiries\nintegration_stripe_charges\nintegration_launchdarkly_flags")]
+    end
+
+    PROV -.->|"today: read seeded mock data"| INT
+    PROV -.->|"prod: swap in real vendor APIs"| EXT["External vendors\nPersona · Stripe · LaunchDarkly / Adyen"]
+
+    classDef ext fill:#fff7ed,stroke:#d97706,color:#7c2d12;
+    classDef db fill:#eff6ff,stroke:#2563eb,color:#1e3a8a;
+    class EXT ext;
+    class DB,INT db;
+          </pre>
+        </div>
+        <p class="muted">
+          Request path: the SPA calls <code>/api/*</code> with a cookie session →
+          a thin router authenticates and checks permissions → the service layer
+          runs the business rule inside a DB transaction, writes an audit event,
+          and (for KYC/refunds) calls a provider adapter. All rules live on the
+          server; the UI only mirrors permissions for UX.
+        </p>
+      </section>
+
+      <section>
+        <h2>Request lifecycle — a production feature-flag change</h2>
+        <div class="card diagram">
+          <pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant U as User (ops/admin)
+    participant SPA as React SPA
+    participant R as Router
+    participant P as permissions.py
+    participant S as feature_flag_service
+    participant DB as PostgreSQL
+    U->>SPA: Toggle prod + set rollout %, add filter, confirm + reason
+    SPA->>R: POST /feature-flags/{id}/value {value, expected_version, reason}
+    R->>P: require feature_flag:write_prod
+    P-->>R: ok (else 403)
+    R->>S: set_flag_value(...)
+    S->>S: normalize_config (validate rollout 0-100, filter ops)
+    S->>DB: SELECT current value (check expected_version)
+    alt version mismatch
+        DB-->>S: version differs
+        S-->>SPA: 409 VERSION_CONFLICT
+    else ok
+        S->>DB: UPDATE value, version+1
+        S->>DB: INSERT version row + audit event
+        S-->>SPA: updated flag
+    end
+          </pre>
+        </div>
+      </section>
+
+      <section>
+        <h2>Key decisions &amp; tradeoffs</h2>
+
+        <div class="decision">
+          <h3>Python backend + React frontend (not the plan's Next.js/Prisma)</h3>
+          <div class="why">
+            The client mandated Python + React. Chose <b>FastAPI + SQLAlchemy 2 +
+            Alembic</b> for typed models, explicit migrations, and a clean place
+            to put business logic. <span class="tag-alt">Tradeoff:</span> two
+            deployables and no end-to-end type sharing like a TS-only stack —
+            accepted for language fit and a strong server-side domain layer.
+          </div>
+        </div>
+
+        <div class="decision">
+          <h3>Thin routers, fat service layer</h3>
+          <div class="why">
+            Every rule (KYC state machine, refund limits/idempotency, flag
+            versioning) lives in <code>app/services/</code>, not routers or React.
+            <span class="tag-alt">Why:</span> the UI can never be the source of
+            truth for a fintech's money/identity operations; logic stays testable
+            and reusable. <span class="tag-alt">Tradeoff:</span> a little more
+            indirection than inlining logic in endpoints.
+          </div>
+        </div>
+
+        <div class="decision">
+          <h3>Money as integer minor units</h3>
+          <div class="why">
+            All amounts are cents (<code>amount_minor</code>), never floats.
+            <span class="tag-alt">Why:</span> avoids rounding errors in refunds
+            and balance math. <span class="tag-alt">Tradeoff:</span> formatting
+            happens at the edges (UI + serializers).
+          </div>
+        </div>
+
+        <div class="decision">
+          <h3>Concurrency: row locks for refunds, optimistic versions for flags</h3>
+          <div class="why">
+            Refunds take a <code>SELECT … FOR UPDATE</code> on the payment so
+            concurrent refunds can't over-refund; status is recomputed from the DB
+            after each success. Flags use an <code>expected_version</code> check
+            returning <code>409 VERSION_CONFLICT</code>.
+            <span class="tag-alt">Why:</span> refunds need a hard guarantee at
+            write time; flag edits are low-contention and benefit from a
+            friendlier optimistic model.
+          </div>
+        </div>
+
+        <div class="decision">
+          <h3>Feature flags: JSONB config per environment</h3>
+          <div class="why">
+            Each (flag, env) stores <code>{enabled, rollout_percentage,
+            filters[]}</code> in JSONB, with legacy booleans upgraded
+            transparently. <span class="tag-alt">Why:</span> matches the
+            PostHog-style ask (rollout % + targeting) without a schema change per
+            new config knob. <span class="tag-alt">Tradeoff:</span> validation
+            moves into the service (<code>normalize_config</code>) instead of the
+            DB.
+          </div>
+        </div>
+
+        <div class="decision">
+          <h3>Idempotency &amp; deterministic mock failures</h3>
+          <div class="why">
+            Refunds require an idempotency key (a duplicate returns the original
+            result); the mock payment provider fails deterministically when a
+            provider id ends in <code>FAIL</code>.
+            <span class="tag-alt">Why:</span> lets the whole failure path be tested
+            end-to-end with no real vendor.
+          </div>
+        </div>
+
+        <div class="decision">
+          <h3>Integrations as mock tables behind an adapter interface</h3>
+          <div class="why">
+            Vendor data (Persona, Stripe, LaunchDarkly) is seeded into
+            <code>integration_*</code> tables read through provider adapters.
+            <span class="tag-alt">Why:</span> the app runs with zero external
+            credentials, and going live is an adapter implementation, not a
+            rewrite. <span class="tag-alt">Tradeoff:</span> data is a snapshot, not
+            a live sync, in this prototype.
+          </div>
+        </div>
+
+        <div class="decision">
+          <h3>Immutable audit log for every mutation</h3>
+          <div class="why">
+            KYC decisions, refunds, and flag changes all write append-only
+            <code>audit_events</code> with before/after snapshots.
+            <span class="tag-alt">Why:</span> compliance and traceability are core
+            for a fintech; it's cheap to add up front and painful to retrofit.
+          </div>
+        </div>
+
+        <div class="decision">
+          <h3>Dev-only auth (signed cookie + user switcher)</h3>
+          <div class="why">
+            Seeded users with a role switcher, not real SSO.
+            <span class="tag-alt">Why:</span> keeps the prototype runnable and lets
+            reviewers exercise RBAC instantly. <span class="tag-alt">Tradeoff /
+            production gap:</span> SSO/SAML + real provisioning is the first thing
+            to add before cutover.
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Roles &amp; permissions (enforced server-side)</h2>
+        <div class="card" style="overflow-x:auto">
+          <table>
+            <thead>
+              <tr><th>Role</th><th>KYC</th><th>Refunds</th><th>Feature flags</th><th>Audit</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><b>ADMIN</b></td><td>read + review</td><td>unlimited</td><td>read + non-prod + prod</td><td>read</td></tr>
+              <tr><td><b>OPS_REVIEWER</b></td><td>read + review</td><td>≤ $2,000</td><td>read + non-prod</td><td>read</td></tr>
+              <tr><td><b>SUPPORT_AGENT</b></td><td>read</td><td>≤ $250</td><td>read</td><td>—</td></tr>
+              <tr><td><b>READ_ONLY</b></td><td>read</td><td>—</td><td>read</td><td>read</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section>
+        <h2>Production gaps (before replacing Retool)</h2>
+        <div class="grid cols-2">
+          <div class="card">
+            <ul>
+              <li>SSO/SAML + real user provisioning</li>
+              <li>Real vendor adapters + secret management</li>
+              <li>Webhook signature verification &amp; retries</li>
+            </ul>
+          </div>
+          <div class="card">
+            <ul>
+              <li>Observability: logging, metrics, alerting</li>
+              <li>Audit-log export/retention; DB backups &amp; DR</li>
+              <li>CI/CD wiring the existing tests into the pipeline</li>
+            </ul>
+          </div>
+        </div>
+        <p class="muted">
+          Full build-vs-buy analysis: see <code>RECOMMENDATION.md</code> in the
+          repo root.
+        </p>
+      </section>
+
+      <footer>Internal Operations Console — architecture reference.</footer>
+    </main>
+
+    <script>
+      mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+    </script>
+  </body>
+</html>
