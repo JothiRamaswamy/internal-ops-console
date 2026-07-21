@@ -57,8 +57,9 @@ def db(engine) -> Session:
             text(
                 "TRUNCATE audit_events, kyc_case_events, kyc_cases, refunds, "
                 "payments, feature_flag_versions, feature_flag_values, "
-                "feature_flags, processed_webhook_events, customers, users "
-                "RESTART IDENTITY CASCADE"
+                "feature_flags, integration_persona_inquiries, "
+                "integration_stripe_charges, integration_launchdarkly_flags, "
+                "customers, users RESTART IDENTITY CASCADE"
             )
         )
     TestSession = sessionmaker(bind=engine, autoflush=False, future=True)

@@ -13,7 +13,6 @@ from app.routers import (
     kyc,
     overview,
     refunds,
-    webhooks,
 )
 
 
@@ -48,7 +47,6 @@ def create_app() -> FastAPI:
     app.include_router(feature_flags.router)
     app.include_router(audit.router)
     app.include_router(integrations.router)
-    app.include_router(webhooks.router)
 
     @app.get("/api/health")
     def health() -> dict:

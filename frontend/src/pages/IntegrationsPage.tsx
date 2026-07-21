@@ -1,12 +1,17 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { RefreshCw } from "lucide-react";
 import { useState } from "react";
 
+import { ApiRequestError } from "@/api/client";
 import {
   getLaunchDarkly,
   getPersona,
   getStripe,
   listIntegrations,
+  runIntegrationSync,
 } from "@/api/queries";
+import { useAuth } from "@/auth/AuthContext";
+import { useToast } from "@/components/Toast";
 import { EmptyState, Loading } from "@/components/ui";
 
 type SourceKey = "persona" | "stripe" | "launchdarkly";
@@ -54,6 +59,10 @@ function DataTable({ rows }: { rows: Record<string, unknown>[] }) {
 
 export function IntegrationsPage() {
   const [active, setActive] = useState<SourceKey>("persona");
+  const { me } = useAuth();
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const canSync = me?.role === "ADMIN" || me?.role === "OPS_REVIEWER";
   const integrations = useQuery({
     queryKey: ["integrations"],
     queryFn: listIntegrations,
@@ -63,12 +72,44 @@ export function IntegrationsPage() {
     queryFn: () => SOURCES[active](),
   });
 
+  const sync = useMutation({
+    mutationFn: runIntegrationSync,
+    onSuccess: ({ result }) => {
+      const k = result.persona_kyc;
+      const p = result.stripe_payments;
+      toast.success(
+        `Sync complete — KYC: +${k.created}/~${k.updated}, ` +
+          `Payments: +${p.created}/~${p.updated}`,
+      );
+      void queryClient.invalidateQueries();
+    },
+    onError: (e) =>
+      toast.error(e instanceof ApiRequestError ? e.message : "Sync failed."),
+  });
+
   return (
     <div className="space-y-5">
-      <div className="rounded-md bg-blue-50 px-4 py-3 text-sm text-blue-800">
-        These tables are <strong>mock representations</strong> of external data
-        sources this console would integrate with. In production, adapters sync
-        from the live vendor APIs; here the data is seeded for demonstration.
+      <div className="flex items-start justify-between gap-4 rounded-md bg-blue-50 px-4 py-3 text-sm text-blue-800">
+        <p>
+          These tables are <strong>mock representations</strong> of external
+          data sources this console integrates with. A <strong>sync/ETL</strong>{" "}
+          job reads these raw source rows and normalizes them into the domain
+          tables (KYC cases, payments); here the data is seeded for
+          demonstration.
+        </p>
+        {canSync && (
+          <button
+            onClick={() => sync.mutate()}
+            disabled={sync.isPending}
+            className="btn-primary flex shrink-0 items-center gap-2"
+          >
+            <RefreshCw
+              size={14}
+              className={sync.isPending ? "animate-spin" : ""}
+            />
+            {sync.isPending ? "Syncing…" : "Sync now"}
+          </button>
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">

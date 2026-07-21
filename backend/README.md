@@ -35,8 +35,21 @@ alembic upgrade head        # apply migrations
 python -m app.seed          # load deterministic demo data (idempotent reset)
 ```
 
-`app.seed` wipes and reloads the domain tables with a fixed random seed, so the
-data is identical on every run.
+`app.seed` wipes and reloads with a fixed random seed, so the data is identical
+on every run. It models the real flow: it populates the `integration_*` staging
+tables (raw vendor mirrors), then runs the sync/ETL layer to normalize them into
+the domain tables (`kyc_cases` + events, `payments`); operator-owned data (KYC
+decisions, in-console refunds) and console-owned feature flags are layered on
+after.
+
+Run the sync on its own (idempotent — re-runnable for backfill/reconciliation):
+
+```bash
+python -m app.sync          # integration_* source tables -> normalized domain
+```
+
+It's also exposed at `POST /api/integrations/sync` (ADMIN / OPS_REVIEWER), which
+the Integrations tab's "Sync now" button calls.
 
 ## Run
 
@@ -61,8 +74,9 @@ app/
 ├── schemas.py         request models (Pydantic)
 ├── serializers.py     response shaping
 ├── models/            SQLAlchemy models (incl. integration_* tables)
-├── services/          business logic: kyc, refund, feature_flag, audit, overview
-├── providers/         pluggable KYC & payment adapters (mock + real stubs)
+├── services/          business logic: kyc, refund, feature_flag, audit, overview, sync (ETL)
+├── sync.py            CLI entrypoint for the integration sync/ETL
+├── providers/         pluggable KYC & payment adapters + normalization (mock + real stubs)
 └── routers/           HTTP endpoints
 ```
 
@@ -89,7 +103,7 @@ Feature flags /api/feature-flags (GET list, POST create), /api/feature-flags/{id
 Audit         /api/audit-events
 Overview      /api/overview
 Integrations  /api/integrations[/persona|stripe|launchdarkly]
-Webhooks      /api/webhooks/kyc/mock
+Sync (ETL)    /api/integrations/sync   (POST; ADMIN / OPS_REVIEWER)
 ```
 
 Errors use a stable shape:

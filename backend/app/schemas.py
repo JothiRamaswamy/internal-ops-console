@@ -47,11 +47,3 @@ class CreateFlagRequest(BaseModel):
     type: FeatureFlagType = FeatureFlagType.BOOLEAN
     owner: str | None = Field(default=None, max_length=255)
     tags: list[str] = Field(default_factory=list)
-
-
-# --- Webhooks ---
-class KycWebhookRequest(BaseModel):
-    event_id: str = Field(min_length=1)
-    vendor_reference_id: str = Field(min_length=1)
-    status: str = Field(min_length=1)
-    payload: dict[str, Any] = Field(default_factory=dict)

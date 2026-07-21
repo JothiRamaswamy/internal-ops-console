@@ -9,6 +9,33 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 from app.models.base import new_id
+from app.models.enums import PaymentStatus
+
+# Stripe charge status strings -> the console's canonical payment status.
+STRIPE_STATUS_MAP: dict[str, PaymentStatus] = {
+    "succeeded": PaymentStatus.SUCCEEDED,
+    "paid": PaymentStatus.SUCCEEDED,
+    "failed": PaymentStatus.FAILED,
+    "disputed": PaymentStatus.DISPUTED,
+}
+
+
+def map_stripe_status(
+    status: str | None, amount_minor: int, amount_refunded_minor: int
+) -> PaymentStatus:
+    """Normalize a Stripe charge into the internal payment status.
+
+    A failed/disputed charge keeps that status; otherwise the refunded amount
+    (relative to the charge total) determines full vs. partial vs. none.
+    """
+    base = STRIPE_STATUS_MAP.get((status or "").lower(), PaymentStatus.SUCCEEDED)
+    if base in (PaymentStatus.FAILED, PaymentStatus.DISPUTED):
+        return base
+    if amount_refunded_minor <= 0:
+        return PaymentStatus.SUCCEEDED
+    if amount_refunded_minor >= amount_minor:
+        return PaymentStatus.FULLY_REFUNDED
+    return PaymentStatus.PARTIALLY_REFUNDED
 
 
 @dataclass
