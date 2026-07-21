@@ -294,6 +294,222 @@ sequenceDiagram
       </section>
 
       <section>
+        <h2>Database structure</h2>
+        <p class="muted">
+          PostgreSQL 16, managed with Alembic migrations. Every table has a
+          string <code>id</code> primary key; most carry <code>created_at</code>/
+          <code>updated_at</code> timestamps. Money is stored as integer minor
+          units (cents). The <b>domain tables</b> hold the app's own state; the
+          <b>integration tables</b> are read-only mock mirrors of vendor data.
+        </p>
+        <div class="card diagram">
+          <pre class="mermaid">
+erDiagram
+    USERS ||--o{ KYC_CASES : "assigned / decided"
+    USERS ||--o{ REFUNDS : requests
+    USERS ||--o{ AUDIT_EVENTS : actor
+    USERS ||--o{ FEATURE_FLAG_VALUES : "updated_by"
+    CUSTOMERS ||--o{ KYC_CASES : has
+    CUSTOMERS ||--o{ PAYMENTS : has
+    KYC_CASES ||--o{ KYC_CASE_EVENTS : "history"
+    PAYMENTS ||--o{ REFUNDS : "refunded by"
+    FEATURE_FLAGS ||--o{ FEATURE_FLAG_VALUES : "per environment"
+    FEATURE_FLAGS ||--o{ FEATURE_FLAG_VERSIONS : "change log"
+
+    USERS {
+        string id PK
+        string email UK
+        string name
+        enum role "ADMIN/OPS/SUPPORT/READ_ONLY"
+    }
+    CUSTOMERS {
+        string id PK
+        string email UK
+        date date_of_birth
+        string country_code
+    }
+    KYC_CASES {
+        string id PK
+        string customer_id FK
+        enum vendor
+        string vendor_reference_id
+        enum status
+        enum risk_level
+        int risk_score
+        string assigned_reviewer_id FK
+        string decided_by_id FK
+        string decision_reason
+        jsonb raw_vendor_payload
+    }
+    KYC_CASE_EVENTS {
+        string id PK
+        string kyc_case_id FK
+        string actor_id FK
+        string event_type
+        enum from_status
+        enum to_status
+        jsonb event_metadata
+    }
+    PAYMENTS {
+        string id PK
+        string customer_id FK
+        enum provider
+        string provider_payment_id
+        int amount_minor
+        string currency
+        enum status
+        string payment_method_last4
+    }
+    REFUNDS {
+        string id PK
+        string payment_id FK
+        string requested_by_id FK
+        int amount_minor
+        enum reason
+        enum status
+        string idempotency_key UK
+        string provider_refund_id
+        string failure_reason
+    }
+    FEATURE_FLAGS {
+        string id PK
+        string key UK
+        enum type
+        string owner
+        array tags
+        datetime archived_at
+    }
+    FEATURE_FLAG_VALUES {
+        string id PK
+        string flag_id FK
+        enum environment
+        jsonb value "enabled/rollout_pct/filters"
+        int version
+        string updated_by_id FK
+    }
+    FEATURE_FLAG_VERSIONS {
+        string id PK
+        string flag_id FK
+        enum environment
+        jsonb previous_value
+        jsonb new_value
+        int version
+        string reason
+        string changed_by_id FK
+    }
+    AUDIT_EVENTS {
+        string id PK
+        string actor_id FK
+        string action
+        string entity_type
+        string entity_id
+        jsonb before
+        jsonb after
+        string ip_address
+    }
+          </pre>
+        </div>
+
+        <h3>Domain tables</h3>
+        <div class="card" style="overflow-x:auto">
+          <table>
+            <thead>
+              <tr><th>Table</th><th>Purpose</th><th>Notable columns &amp; rules</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>users</code></td>
+                <td>Operators of the console.</td>
+                <td>Unique <code>email</code>; <code>role</code> drives all RBAC. Referenced as KYC reviewer/decider, refund requester, flag editor, and audit actor.</td>
+              </tr>
+              <tr>
+                <td><code>customers</code></td>
+                <td>End customers KYC &amp; payments belong to.</td>
+                <td>Unique <code>email</code>, <code>country_code</code>, <code>date_of_birth</code>. Parent of <code>kyc_cases</code> and <code>payments</code>.</td>
+              </tr>
+              <tr>
+                <td><code>kyc_cases</code></td>
+                <td>The KYC review queue.</td>
+                <td><code>status</code> state machine + <code>risk_level</code>/<code>risk_score</code>; nullable <code>assigned_reviewer_id</code>/<code>decided_by_id</code>; <code>decision_reason</code> (required on reject); full vendor response in <code>raw_vendor_payload</code> (JSONB).</td>
+              </tr>
+              <tr>
+                <td><code>kyc_case_events</code></td>
+                <td>Per-case transition history.</td>
+                <td><code>from_status</code>→<code>to_status</code>, <code>event_type</code>, actor, and JSONB <code>event_metadata</code> — append-only.</td>
+              </tr>
+              <tr>
+                <td><code>payments</code></td>
+                <td>Charges eligible for refunds.</td>
+                <td><code>amount_minor</code> (cents) + <code>currency</code>; <code>status</code> (SUCCEEDED/PARTIALLY_/FULLY_REFUNDED/DISPUTED/FAILED); <code>provider</code> + <code>provider_payment_id</code>; masked <code>payment_method_last4</code>.</td>
+              </tr>
+              <tr>
+                <td><code>refunds</code></td>
+                <td>Refunds issued against a payment.</td>
+                <td><code>amount_minor</code>, <code>reason</code>, <code>status</code>; <b>unique <code>idempotency_key</code></b> (dedupes retries); <code>failure_reason</code> for provider failures. Sum of SUCCEEDED refunds drives the parent payment's status.</td>
+              </tr>
+              <tr>
+                <td><code>feature_flags</code></td>
+                <td>Flag definitions.</td>
+                <td>Immutable unique <code>key</code>; <code>type</code>, <code>owner</code>, <code>tags[]</code>; <code>archived_at</code> freezes edits.</td>
+              </tr>
+              <tr>
+                <td><code>feature_flag_values</code></td>
+                <td>Current config per environment.</td>
+                <td><b>Unique (<code>flag_id</code>, <code>environment</code>)</b>; JSONB <code>value</code> = <code>{enabled, rollout_percentage, filters[]}</code>; <code>version</code> powers optimistic concurrency.</td>
+              </tr>
+              <tr>
+                <td><code>feature_flag_versions</code></td>
+                <td>Immutable change log per flag/env.</td>
+                <td><code>previous_value</code>→<code>new_value</code> (JSONB), <code>version</code>, required <code>reason</code>, <code>changed_by_id</code>.</td>
+              </tr>
+              <tr>
+                <td><code>audit_events</code></td>
+                <td>Cross-cutting immutable audit trail.</td>
+                <td><code>action</code>, <code>entity_type</code>/<code>entity_id</code>, JSONB <code>before</code>/<code>after</code>, <code>ip_address</code>. Written for every KYC/refund/flag mutation.</td>
+              </tr>
+              <tr>
+                <td><code>processed_webhook_events</code></td>
+                <td>Webhook idempotency ledger.</td>
+                <td>Unique <code>event_id</code> per <code>source</code> so a replayed webhook is processed once.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Integration tables (mock vendor mirrors)</h3>
+        <p class="muted">
+          Standalone, read-only tables seeded to represent data that would sync
+          from external vendors. Each keeps a raw <code>jsonb</code> payload so
+          adapters can evolve without schema churn; not foreign-keyed to the
+          domain tables (they model an external source of truth).
+        </p>
+        <div class="card" style="overflow-x:auto">
+          <table>
+            <thead>
+              <tr><th>Table</th><th>Stands in for</th><th>Notable columns</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>integration_persona_inquiries</code></td>
+                <td>Persona identity-verification inquiries (KYC source).</td>
+                <td>Unique <code>inquiry_id</code>, <code>reference_id</code>, <code>status</code>, name/email, <code>country_code</code>, <code>risk_score</code>, <code>raw</code>.</td>
+              </tr>
+              <tr>
+                <td><code>integration_stripe_charges</code></td>
+                <td>Stripe charges (payments/refunds source).</td>
+                <td>Unique <code>charge_id</code>, <code>payment_intent</code>, <code>amount</code>/<code>amount_refunded</code>, <code>currency</code>, <code>status</code>, card brand/last4, <code>raw</code>.</td>
+              </tr>
+              <tr>
+                <td><code>integration_launchdarkly_flags</code></td>
+                <td>LaunchDarkly flags (feature-flag source).</td>
+                <td>Unique <code>flag_key</code>, <code>name</code>, <code>kind</code>, <code>temporary</code>, <code>maintainer</code>, per-env <code>environments</code> (JSONB), <code>raw</code>.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section>
         <h2>Roles &amp; permissions (enforced server-side)</h2>
         <div class="card" style="overflow-x:auto">
           <table>
