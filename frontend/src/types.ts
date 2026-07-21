@@ -129,19 +129,6 @@ export interface FeatureFlag {
   versions?: FlagVersion[];
 }
 
-export interface AuditEvent {
-  id: string;
-  actor: UserSummary | null;
-  action: string;
-  entity_type: string;
-  entity_id: string;
-  before: Record<string, unknown> | null;
-  after: Record<string, unknown> | null;
-  metadata: Record<string, unknown> | null;
-  ip_address: string | null;
-  created_at: string;
-}
-
 export interface Overview {
   kyc_awaiting_review: number;
   kyc_high_risk: number;
@@ -149,7 +136,6 @@ export interface Overview {
   failed_refunds: number;
   prod_flags_enabled: number;
   prod_flag_changes_last_7d: number;
-  recent_audit: AuditEvent[];
 }
 
 export interface Paged<T> {

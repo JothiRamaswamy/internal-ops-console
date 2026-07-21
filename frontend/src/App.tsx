@@ -10,7 +10,6 @@ import { RefundsListPage } from "@/pages/RefundsListPage";
 import { PaymentDetailPage } from "@/pages/PaymentDetailPage";
 import { FeatureFlagsPage } from "@/pages/FeatureFlagsPage";
 import { FeatureFlagDetailPage } from "@/pages/FeatureFlagDetailPage";
-import { AuditPage } from "@/pages/AuditPage";
 import { IntegrationsPage } from "@/pages/IntegrationsPage";
 
 export default function App() {
@@ -36,7 +35,6 @@ export default function App() {
         <Route path="refunds/:id" element={<PaymentDetailPage />} />
         <Route path="feature-flags" element={<FeatureFlagsPage />} />
         <Route path="feature-flags/:id" element={<FeatureFlagDetailPage />} />
-        <Route path="audit" element={<AuditPage />} />
         <Route path="integrations" element={<IntegrationsPage />} />
         <Route path="*" element={<OverviewPage />} />
       </Route>

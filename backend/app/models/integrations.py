@@ -1,9 +1,10 @@
-"""Mock "integration source" tables.
+"""Integration source (staging) tables.
 
 These stand in for external systems we would integrate with in production. Instead
 of calling the real vendor APIs, we seed representative raw records into these
-tables so the console can demonstrate how normalized internal data maps back to
-each upstream source. Each row mirrors the shape of a real vendor object.
+tables; the sync/ETL layer reads them and normalizes them into the domain tables.
+Each row mirrors the shape of a real vendor object. Feature flags are
+console-owned and have no integration source.
 """
 
 from datetime import datetime
@@ -51,19 +52,4 @@ class IntegrationStripeCharge(IdMixin, Base):
     created_at_source: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    raw: Mapped[dict] = mapped_column(JSONB, nullable=False)
-
-
-class IntegrationLaunchDarklyFlag(IdMixin, Base):
-    """Raw LaunchDarkly flag config (feature-flag integration source)."""
-
-    __tablename__ = "integration_launchdarkly_flags"
-
-    flag_key: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    kind: Mapped[str] = mapped_column(String(32), nullable=False)
-    temporary: Mapped[bool] = mapped_column(default=False)
-    maintainer: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    tags: Mapped[dict] = mapped_column(JSONB, nullable=True)
-    environments: Mapped[dict] = mapped_column(JSONB, nullable=False)
     raw: Mapped[dict] = mapped_column(JSONB, nullable=False)

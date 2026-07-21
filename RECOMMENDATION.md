@@ -66,9 +66,10 @@ than the line-item savings.
 - **Full customization.** KYC reviewers get exactly the queue, filters, and
   decision workflow they need; refund limits and approval rules are codified in
   your own service layer, not approximated in a GUI.
-- **Own your data and integrations.** Vendor data (Persona, Stripe,
-  LaunchDarkly) flows through adapters *you* control, in *your* database, with no
+- **Own your data and integrations.** Vendor data (Persona for KYC, Stripe for
+  payments) flows through adapters *you* control, in *your* database, with no
   third-party platform in the path of sensitive KYC/PII and payment operations.
+  Feature flags are console-owned outright.
 - **First-class auditability & RBAC.** Every mutation is an immutable audit
   event; permissions are enforced server-side and are versioned in code and
   reviewed in PRs — valuable for a regulated fintech.
@@ -137,9 +138,10 @@ de-risk the transition:
 
 - **SSO/SAML** and real user provisioning (this prototype uses a dev-only
   signed-cookie session with a user switcher).
-- **Real integration adapters** for Persona / Stripe / LaunchDarkly (the
-  interfaces exist; implementations are mocked here) plus secret management.
-- **Webhook signature verification** and retry/idempotency hardening.
+- **Real integration adapters** for Persona (KYC) and Stripe (payments) — the
+  interfaces exist; implementations are mocked here — plus secret management.
+- **A scheduled sync/ETL runner** (plus an outbox for write-backs and divergence
+  alerts) to replace the manual, seeded sync used in the prototype.
 - **Observability**: logging, metrics, alerting, and audit-log export/retention.
 - **Backups & DR** for the Postgres database.
 - **CI/CD** with the included tests wired into the pipeline.

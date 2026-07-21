@@ -48,7 +48,7 @@ src/
 ├── lib/format.ts       money / date formatting helpers
 ├── types.ts            shared API types
 └── pages/              Overview, KYC (list/detail), Refunds (list/detail),
-                        Feature flags (list/detail), Audit, Integrations
+                        Feature flags (list/detail), Integrations
 ```
 
 ## Notes

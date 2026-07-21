@@ -18,6 +18,7 @@ node_modules/
 dist/
 .vite/
 frontend/dist/
+*.tsbuildinfo
 
 # Editors / OS
 .DS_Store

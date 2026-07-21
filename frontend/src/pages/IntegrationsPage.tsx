@@ -1,54 +1,139 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
-import { useState } from "react";
 
 import { ApiRequestError } from "@/api/client";
 import {
-  getLaunchDarkly,
-  getPersona,
-  getStripe,
+  getPersonaRows,
+  getStripeRows,
   listIntegrations,
   runIntegrationSync,
+  type IntegrationHealth,
 } from "@/api/queries";
 import { useAuth } from "@/auth/AuthContext";
 import { useToast } from "@/components/Toast";
 import { EmptyState, Loading } from "@/components/ui";
+import { formatDateTime, formatMoney, timeAgo } from "@/lib/format";
 
-type SourceKey = "persona" | "stripe" | "launchdarkly";
+function HealthCard({ it }: { it: IntegrationHealth }) {
+  return (
+    <div className="card p-4">
+      <div className="flex items-start justify-between">
+        <div>
+          <div className="text-sm font-semibold text-slate-800">{it.name}</div>
+          <div className="text-xs text-slate-400">{it.category}</div>
+        </div>
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
+          <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+          Connected
+        </span>
+      </div>
+      <dl className="mt-3 space-y-1.5 text-xs">
+        <div className="flex justify-between">
+          <dt className="text-slate-400">Records synced</dt>
+          <dd className="font-medium text-slate-700">{it.record_count}</dd>
+        </div>
+        <div className="flex justify-between">
+          <dt className="text-slate-400">Last synced</dt>
+          <dd className="font-medium text-slate-700">
+            {it.last_synced_at ? timeAgo(it.last_synced_at) : "Never"}
+          </dd>
+        </div>
+        <div className="flex justify-between">
+          <dt className="text-slate-400">Next sync</dt>
+          <dd className="font-medium text-slate-700">
+            {it.next_sync_at ? formatDateTime(it.next_sync_at) : "—"}
+          </dd>
+        </div>
+      </dl>
+    </div>
+  );
+}
 
-const SOURCES: Record<SourceKey, () => Promise<{ items: Record<string, unknown>[] }>> = {
-  persona: getPersona,
-  stripe: getStripe,
-  launchdarkly: getLaunchDarkly,
-};
-
-function DataTable({ rows }: { rows: Record<string, unknown>[] }) {
-  if (rows.length === 0) return <EmptyState message="No rows." />;
-  const columns = Object.keys(rows[0]).filter((c) => c !== "raw");
+function PersonaTable() {
+  const q = useQuery({
+    queryKey: ["integration-rows", "persona"],
+    queryFn: getPersonaRows,
+  });
+  if (q.isLoading) return <Loading />;
+  const rows = q.data?.items ?? [];
+  if (rows.length === 0) return <EmptyState message="No synced rows." />;
   return (
     <div className="overflow-auto">
       <table className="w-full">
         <thead className="border-b border-slate-100 bg-slate-50">
           <tr>
-            {columns.map((c) => (
-              <th key={c} className="th">
-                {c}
-              </th>
-            ))}
+            <th className="th">Inquiry</th>
+            <th className="th">Name</th>
+            <th className="th">Status</th>
+            <th className="th">Country</th>
+            <th className="th">Risk</th>
+            <th className="th">Received</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
-          {rows.map((r, i) => (
-            <tr key={i} className="hover:bg-slate-50">
-              {columns.map((c) => (
-                <td key={c} className="td max-w-xs truncate">
-                  {r[c] === null || r[c] === undefined
-                    ? "—"
-                    : typeof r[c] === "object"
-                      ? JSON.stringify(r[c])
-                      : String(r[c])}
-                </td>
-              ))}
+          {rows.map((r) => (
+            <tr key={r.inquiry_id} className="hover:bg-slate-50">
+              <td className="td font-mono text-xs">{r.inquiry_id}</td>
+              <td className="td">
+                {r.name || "—"}
+                <div className="text-xs text-slate-400">{r.email}</div>
+              </td>
+              <td className="td capitalize">{r.status}</td>
+              <td className="td">{r.country_code ?? "—"}</td>
+              <td className="td">{r.risk_score ?? "—"}</td>
+              <td className="td text-slate-500">
+                {r.created_at ? timeAgo(r.created_at) : "—"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function StripeTable() {
+  const q = useQuery({
+    queryKey: ["integration-rows", "stripe"],
+    queryFn: getStripeRows,
+  });
+  if (q.isLoading) return <Loading />;
+  const rows = q.data?.items ?? [];
+  if (rows.length === 0) return <EmptyState message="No synced rows." />;
+  return (
+    <div className="overflow-auto">
+      <table className="w-full">
+        <thead className="border-b border-slate-100 bg-slate-50">
+          <tr>
+            <th className="th">Charge</th>
+            <th className="th">Customer</th>
+            <th className="th">Amount</th>
+            <th className="th">Refunded</th>
+            <th className="th">Status</th>
+            <th className="th">Card</th>
+            <th className="th">Received</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {rows.map((r) => (
+            <tr key={r.charge_id} className="hover:bg-slate-50">
+              <td className="td font-mono text-xs">{r.charge_id}</td>
+              <td className="td">{r.customer_email ?? "—"}</td>
+              <td className="td">
+                {formatMoney(r.amount, r.currency.toUpperCase())}
+              </td>
+              <td className="td">
+                {r.amount_refunded > 0
+                  ? formatMoney(r.amount_refunded, r.currency.toUpperCase())
+                  : "—"}
+              </td>
+              <td className="td capitalize">{r.status}</td>
+              <td className="td text-slate-500">
+                {r.card_brand ? `${r.card_brand} ····${r.card_last4}` : "—"}
+              </td>
+              <td className="td text-slate-500">
+                {r.created_at ? timeAgo(r.created_at) : "—"}
+              </td>
             </tr>
           ))}
         </tbody>
@@ -58,7 +143,6 @@ function DataTable({ rows }: { rows: Record<string, unknown>[] }) {
 }
 
 export function IntegrationsPage() {
-  const [active, setActive] = useState<SourceKey>("persona");
   const { me } = useAuth();
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -66,10 +150,6 @@ export function IntegrationsPage() {
   const integrations = useQuery({
     queryKey: ["integrations"],
     queryFn: listIntegrations,
-  });
-  const source = useQuery({
-    queryKey: ["integration-source", active],
-    queryFn: () => SOURCES[active](),
   });
 
   const sync = useMutation({
@@ -87,15 +167,20 @@ export function IntegrationsPage() {
       toast.error(e instanceof ApiRequestError ? e.message : "Sync failed."),
   });
 
+  const lastSynced = integrations.data?.last_synced_at;
+  const nextSync = integrations.data?.next_sync_at;
+  const interval = integrations.data?.sync_interval_minutes;
+
   return (
     <div className="space-y-5">
       <div className="flex items-start justify-between gap-4 rounded-md bg-blue-50 px-4 py-3 text-sm text-blue-800">
         <p>
-          These tables are <strong>mock representations</strong> of external
-          data sources this console integrates with. A <strong>sync/ETL</strong>{" "}
-          job reads these raw source rows and normalizes them into the domain
-          tables (KYC cases, payments); here the data is seeded for
-          demonstration.
+          A scheduled <strong>sync/ETL</strong> job pulls each vendor into its
+          staging table and normalizes it into the domain tables (KYC cases,
+          payments)
+          {interval ? ` — nominally every ${interval} minutes` : ""}. Last synced{" "}
+          <strong>{lastSynced ? timeAgo(lastSynced) : "never"}</strong>
+          {nextSync ? `; next around ${formatDateTime(nextSync)}` : ""}.
         </p>
         {canSync && (
           <button
@@ -112,51 +197,32 @@ export function IntegrationsPage() {
         )}
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        {(integrations.data?.integrations ?? []).map((it) => (
-          <div key={it.key} className="card p-4">
-            <div className="flex items-start justify-between">
-              <div>
-                <div className="text-sm font-semibold text-slate-800">
-                  {it.name}
-                </div>
-                <div className="text-xs text-slate-400">{it.category}</div>
-              </div>
-              <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
-                Connected
-              </span>
-            </div>
-            <div className="mt-3 text-2xl font-semibold text-slate-800">
-              {it.record_count}
-            </div>
-            <div className="text-xs text-slate-400">
-              records · <span className="font-mono">{it.table}</span>
-            </div>
-          </div>
-        ))}
+      {integrations.isLoading ? (
+        <Loading />
+      ) : (
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          {(integrations.data?.integrations ?? []).map((it) => (
+            <HealthCard key={it.key} it={it} />
+          ))}
+        </div>
+      )}
+
+      <div className="card overflow-hidden">
+        <div className="border-b border-slate-200 px-4 py-3">
+          <h3 className="text-sm font-semibold text-slate-800">
+            Persona — recent synced inquiries
+          </h3>
+        </div>
+        <PersonaTable />
       </div>
 
       <div className="card overflow-hidden">
-        <div className="flex gap-1 border-b border-slate-200 px-3 pt-3">
-          {(Object.keys(SOURCES) as SourceKey[]).map((key) => (
-            <button
-              key={key}
-              onClick={() => setActive(key)}
-              className={`rounded-t-md px-3 py-2 text-sm font-medium capitalize ${
-                active === key
-                  ? "border border-b-0 border-slate-200 bg-white text-brand-700"
-                  : "text-slate-500 hover:text-slate-700"
-              }`}
-            >
-              {key}
-            </button>
-          ))}
+        <div className="border-b border-slate-200 px-4 py-3">
+          <h3 className="text-sm font-semibold text-slate-800">
+            Stripe — recent synced charges
+          </h3>
         </div>
-        {source.isLoading ? (
-          <Loading />
-        ) : (
-          <DataTable rows={source.data?.items ?? []} />
-        )}
+        <StripeTable />
       </div>
     </div>
   );

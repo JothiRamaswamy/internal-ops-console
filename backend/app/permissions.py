@@ -19,7 +19,6 @@ Permission = Literal[
     "feature_flag:read",
     "feature_flag:write_nonprod",
     "feature_flag:write_prod",
-    "audit:read",
 ]
 
 ALL_PERMISSIONS: tuple[Permission, ...] = (
@@ -30,7 +29,6 @@ ALL_PERMISSIONS: tuple[Permission, ...] = (
     "feature_flag:read",
     "feature_flag:write_nonprod",
     "feature_flag:write_prod",
-    "audit:read",
 )
 
 ROLE_PERMISSIONS: dict[UserRole, set[Permission]] = {
@@ -42,7 +40,6 @@ ROLE_PERMISSIONS: dict[UserRole, set[Permission]] = {
         "refund:create",
         "feature_flag:read",
         "feature_flag:write_nonprod",
-        "audit:read",
     },
     UserRole.SUPPORT_AGENT: {
         "kyc:read",
@@ -54,7 +51,6 @@ ROLE_PERMISSIONS: dict[UserRole, set[Permission]] = {
         "kyc:read",
         "refund:read",
         "feature_flag:read",
-        "audit:read",
     },
 }
 

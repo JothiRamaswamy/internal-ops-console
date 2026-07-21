@@ -6,7 +6,6 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.config import settings
 from app.errors import AppError, app_error_handler, validation_exception_handler
 from app.routers import (
-    audit,
     auth,
     feature_flags,
     integrations,
@@ -45,7 +44,6 @@ def create_app() -> FastAPI:
     app.include_router(kyc.router)
     app.include_router(refunds.router)
     app.include_router(feature_flags.router)
-    app.include_router(audit.router)
     app.include_router(integrations.router)
 
     @app.get("/api/health")

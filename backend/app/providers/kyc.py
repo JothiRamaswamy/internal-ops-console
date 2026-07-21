@@ -1,8 +1,11 @@
 """KYC provider abstraction.
 
-The console normalizes every vendor into one internal model. Real adapters
-(Persona, Stripe Identity) are stubbed so no external calls happen in the
-prototype; only `MockKycProvider` is functional.
+The console integrates a single KYC vendor (Persona) and normalizes it into one
+internal model. The real `PersonaKycProvider` adapter is stubbed so no external
+calls happen in the prototype; `MockKycProvider` is the functional in-prototype
+implementation that stands in for the Persona API. The abstract `KycProvider`
+interface is the seam to swap the mock for the real adapter (or an additional
+vendor later) without touching the services, RBAC, or UI.
 """
 
 from abc import ABC, abstractmethod
@@ -76,7 +79,7 @@ class MockKycProvider(KycProvider):
             watchlist_result="clear",
             address_result="passed",
             reason_codes=[],
-            raw={"provider": "MOCK_VENDOR", "id": provider_case_id},
+            raw={"provider": "PERSONA", "id": provider_case_id},
         )
 
     def request_more_info(self, provider_case_id: str) -> None:  # noqa: D401
@@ -92,17 +95,3 @@ class PersonaKycProvider(KycProvider):
 
     def request_more_info(self, provider_case_id: str) -> None:
         raise NotImplementedError("PersonaKycProvider is not implemented in the prototype.")
-
-
-class StripeIdentityProvider(KycProvider):
-    """Placeholder adapter — wire up the Stripe Identity API here in production."""
-
-    def get_case(self, provider_case_id: str) -> NormalizedKycResult:
-        raise NotImplementedError(
-            "StripeIdentityProvider is not implemented in the prototype."
-        )
-
-    def request_more_info(self, provider_case_id: str) -> None:
-        raise NotImplementedError(
-            "StripeIdentityProvider is not implemented in the prototype."
-        )

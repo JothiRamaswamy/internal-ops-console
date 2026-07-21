@@ -1,8 +1,13 @@
-"""Read-only views over the mock integration source tables.
+"""Integration health + the inbound sync/ETL trigger.
 
-These endpoints expose the raw upstream records (Persona, Stripe, LaunchDarkly)
-so the UI can show "this is the external source of truth we integrate with".
+The console integrates two external sources — Persona (KYC) and Stripe
+(payments). Feature flags are console-owned and have no integration. This
+router reports connection health and sync freshness (last / next sync),
+exposes the manual sync trigger, and returns a sample of the most-recent rows
+landed in each integration's staging table.
 """
+
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
@@ -11,9 +16,9 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.deps import get_current_user
 from app.errors import AppError
+from app.models.audit import AuditEvent
 from app.models.enums import UserRole
 from app.models.integrations import (
-    IntegrationLaunchDarklyFlag,
     IntegrationPersonaInquiry,
     IntegrationStripeCharge,
 )
@@ -26,6 +31,18 @@ router = APIRouter(prefix="/api/integrations", tags=["integrations"])
 
 # Roles allowed to trigger a manual inbound sync.
 SYNC_ROLES = {UserRole.ADMIN, UserRole.OPS_REVIEWER}
+
+# Nominal cadence for the scheduled sync in production; used to derive the
+# "next sync" estimate shown on the health page.
+SYNC_INTERVAL = timedelta(minutes=15)
+
+
+def _last_synced_at(db: Session) -> datetime | None:
+    return db.scalar(
+        select(func.max(AuditEvent.created_at)).where(
+            AuditEvent.action == "INTEGRATION_SYNCED"
+        )
+    )
 
 
 @router.post("/sync")
@@ -56,45 +73,46 @@ def trigger_sync(
 def list_integrations(
     db: Session = Depends(get_db), user: User = Depends(get_current_user)
 ) -> dict:
+    """Health + sync-freshness for each connected integration."""
     persona = db.scalar(select(func.count()).select_from(IntegrationPersonaInquiry))
     stripe = db.scalar(select(func.count()).select_from(IntegrationStripeCharge))
-    ld = db.scalar(select(func.count()).select_from(IntegrationLaunchDarklyFlag))
+    last = _last_synced_at(db)
+    next_sync = (last + SYNC_INTERVAL) if last else None
+
+    def entry(key: str, name: str, category: str, count: int | None) -> dict:
+        return {
+            "key": key,
+            "name": name,
+            "category": category,
+            "status": "connected",
+            "record_count": count or 0,
+            "last_synced_at": iso(last),
+            "next_sync_at": iso(next_sync),
+        }
+
     return {
         "integrations": [
-            {
-                "key": "persona",
-                "name": "Persona",
-                "category": "KYC / Identity Verification",
-                "table": "integration_persona_inquiries",
-                "record_count": persona or 0,
-            },
-            {
-                "key": "stripe",
-                "name": "Stripe",
-                "category": "Payments",
-                "table": "integration_stripe_charges",
-                "record_count": stripe or 0,
-            },
-            {
-                "key": "launchdarkly",
-                "name": "LaunchDarkly",
-                "category": "Feature Flags",
-                "table": "integration_launchdarkly_flags",
-                "record_count": ld or 0,
-            },
-        ]
+            entry("persona", "Persona", "KYC / Identity Verification", persona),
+            entry("stripe", "Stripe", "Payments", stripe),
+        ],
+        "last_synced_at": iso(last),
+        "next_sync_at": iso(next_sync),
+        "sync_interval_minutes": int(SYNC_INTERVAL.total_seconds() // 60),
     }
 
 
 @router.get("/persona")
 def persona_inquiries(
-    db: Session = Depends(get_db), user: User = Depends(get_current_user)
+    limit: int = 8,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> dict:
-    rows = db.execute(
-        select(IntegrationPersonaInquiry).order_by(
-            IntegrationPersonaInquiry.created_at_source.desc()
-        )
-    ).scalars().all()
+    """Most-recent Persona inquiries landed in the KYC staging table."""
+    rows = db.scalars(
+        select(IntegrationPersonaInquiry)
+        .order_by(IntegrationPersonaInquiry.created_at_source.desc())
+        .limit(limit)
+    ).all()
     return {
         "items": [
             {
@@ -114,13 +132,16 @@ def persona_inquiries(
 
 @router.get("/stripe")
 def stripe_charges(
-    db: Session = Depends(get_db), user: User = Depends(get_current_user)
+    limit: int = 8,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> dict:
-    rows = db.execute(
-        select(IntegrationStripeCharge).order_by(
-            IntegrationStripeCharge.created_at_source.desc()
-        )
-    ).scalars().all()
+    """Most-recent Stripe charges landed in the payments staging table."""
+    rows = db.scalars(
+        select(IntegrationStripeCharge)
+        .order_by(IntegrationStripeCharge.created_at_source.desc())
+        .limit(limit)
+    ).all()
     return {
         "items": [
             {
@@ -134,31 +155,6 @@ def stripe_charges(
                 "card_brand": r.card_brand,
                 "card_last4": r.card_last4,
                 "created_at": iso(r.created_at_source),
-            }
-            for r in rows
-        ]
-    }
-
-
-@router.get("/launchdarkly")
-def launchdarkly_flags(
-    db: Session = Depends(get_db), user: User = Depends(get_current_user)
-) -> dict:
-    rows = db.execute(
-        select(IntegrationLaunchDarklyFlag).order_by(
-            IntegrationLaunchDarklyFlag.flag_key
-        )
-    ).scalars().all()
-    return {
-        "items": [
-            {
-                "flag_key": r.flag_key,
-                "name": r.name,
-                "kind": r.kind,
-                "temporary": r.temporary,
-                "maintainer": r.maintainer,
-                "tags": r.tags,
-                "environments": r.environments,
             }
             for r in rows
         ]

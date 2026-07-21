@@ -84,8 +84,9 @@ app/
 ├── serializers.py     response shaping
 ├── models/            SQLAlchemy models (incl. integration_* tables)
 ├── services/          business logic: kyc, refund, feature_flag, audit, overview, sync (ETL)
+│                       (audit is written for every mutation; there is no audit read API)
 ├── sync.py            CLI entrypoint for the integration sync/ETL
-├── providers/         pluggable KYC & payment adapters + normalization (mock + real stubs)
+├── providers/         Persona KYC + Stripe payment adapters + normalization (mock + real stubs)
 └── routers/           HTTP endpoints
 ```
 
@@ -109,9 +110,8 @@ Auth          /api/auth/{users,login,logout,me}
 KYC           /api/kyc, /api/kyc/summary, /api/kyc/{id}[/assign|approve|reject|request-more-info]
 Refunds       /api/payments, /api/payments/summary, /api/payments/{id}, /api/payments/{id}/refunds
 Feature flags /api/feature-flags (GET list, POST create), /api/feature-flags/{id}[/value|archive|restore]
-Audit         /api/audit-events
 Overview      /api/overview
-Integrations  /api/integrations[/persona|stripe|launchdarkly]
+Integrations  /api/integrations (health), /api/integrations/{persona|stripe} (recent synced rows)
 Sync (ETL)    /api/integrations/sync   (POST; ADMIN / OPS_REVIEWER)
 ```
 

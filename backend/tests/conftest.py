@@ -58,7 +58,7 @@ def db(engine) -> Session:
                 "TRUNCATE audit_events, kyc_case_events, kyc_cases, refunds, "
                 "payments, feature_flag_versions, feature_flag_values, "
                 "feature_flags, integration_persona_inquiries, "
-                "integration_stripe_charges, integration_launchdarkly_flags, "
+                "integration_stripe_charges, "
                 "customers, users RESTART IDENTITY CASCADE"
             )
         )

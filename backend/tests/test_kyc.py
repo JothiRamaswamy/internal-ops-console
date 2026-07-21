@@ -10,7 +10,7 @@ from app.services import kyc_service
 def make_case(db, customer, status=KycStatus.NEEDS_REVIEW) -> KycCase:
     case = KycCase(
         customer_id=customer.id,
-        vendor=KycVendor.MOCK_VENDOR,
+        vendor=KycVendor.PERSONA,
         vendor_reference_id=f"ref-{status.value}",
         status=status,
         risk_level=RiskLevel.LOW,
