@@ -173,7 +173,7 @@ def seed_stripe_source(db: Session, customers) -> None:
         customer = RNG.choice(customers)
         amount = RNG.choice([1999, 4999, 9900, 12500, 25000, 45000, 199900, 250000])
         created = _dt(RNG.uniform(0.1, 60))
-        currency = "usd" if i % 8 else RNG.choice(["eur", "gbp"])
+        currency = "usd"
         status = "succeeded"
         if i in (2, 5):
             status = "disputed"
