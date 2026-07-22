@@ -13,14 +13,12 @@ const STATUSES = [
   "REJECTED",
 ];
 const RISK = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
-const VENDORS = ["PERSONA", "STRIPE_IDENTITY", "MOCK_VENDOR"];
 
 export function KycListPage() {
   const [params, setParams] = useSearchParams();
   const filters = {
     status: params.get("status") ?? "",
     risk_level: params.get("risk_level") ?? "",
-    vendor: params.get("vendor") ?? "",
     country: params.get("country") ?? "",
     q: params.get("q") ?? "",
   };
@@ -63,7 +61,7 @@ export function KycListPage() {
       </div>
 
       <div className="card p-4">
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <div>
             <label className="label">Search</label>
             <input
@@ -97,21 +95,6 @@ export function KycListPage() {
             >
               <option value="">All</option>
               {RISK.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="label">Vendor</label>
-            <select
-              className="input"
-              value={filters.vendor}
-              onChange={(e) => setFilter("vendor", e.target.value)}
-            >
-              <option value="">All</option>
-              {VENDORS.map((s) => (
                 <option key={s} value={s}>
                   {s}
                 </option>

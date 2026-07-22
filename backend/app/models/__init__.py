@@ -12,7 +12,6 @@ from app.models.audit import AuditEvent
 from app.models.integrations import (
     IntegrationPersonaInquiry,
     IntegrationStripeCharge,
-    IntegrationLaunchDarklyFlag,
 )
 
 __all__ = [
@@ -29,5 +28,4 @@ __all__ = [
     "AuditEvent",
     "IntegrationPersonaInquiry",
     "IntegrationStripeCharge",
-    "IntegrationLaunchDarklyFlag",
 ]

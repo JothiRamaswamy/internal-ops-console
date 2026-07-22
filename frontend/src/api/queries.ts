@@ -1,6 +1,5 @@
 import { api, qs } from "@/api/client";
 import type {
-  AuditEvent,
   FeatureFlag,
   KycCase,
   Overview,
@@ -41,26 +40,51 @@ export const listFlags = (params: Record<string, unknown>) =>
   api.get<Paged<FeatureFlag>>(`/feature-flags${qs(params)}`);
 export const getFlag = (id: string) => api.get<FeatureFlag>(`/feature-flags/${id}`);
 
-// --- Audit ---
-export const listAudit = (params: Record<string, unknown>) =>
-  api.get<Paged<AuditEvent>>(`/audit-events${qs(params)}`);
-
 // --- Integrations ---
-export interface IntegrationSummary {
+export interface IntegrationHealth {
   key: string;
   name: string;
   category: string;
-  table: string;
+  status: string;
   record_count: number;
+  last_synced_at: string | null;
+  next_sync_at: string | null;
+}
+export interface IntegrationsResponse {
+  integrations: IntegrationHealth[];
+  last_synced_at: string | null;
+  next_sync_at: string | null;
+  sync_interval_minutes: number;
 }
 export const listIntegrations = () =>
-  api.get<{ integrations: IntegrationSummary[] }>("/integrations");
-export const getPersona = () =>
-  api.get<{ items: Record<string, unknown>[] }>("/integrations/persona");
-export const getStripe = () =>
-  api.get<{ items: Record<string, unknown>[] }>("/integrations/stripe");
-export const getLaunchDarkly = () =>
-  api.get<{ items: Record<string, unknown>[] }>("/integrations/launchdarkly");
+  api.get<IntegrationsResponse>("/integrations");
+
+export interface PersonaRow {
+  inquiry_id: string;
+  reference_id: string;
+  status: string;
+  name: string;
+  email: string | null;
+  country_code: string | null;
+  risk_score: number | null;
+  created_at: string | null;
+}
+export interface StripeRow {
+  charge_id: string;
+  payment_intent: string | null;
+  amount: number;
+  amount_refunded: number;
+  currency: string;
+  status: string;
+  customer_email: string | null;
+  card_brand: string | null;
+  card_last4: string | null;
+  created_at: string | null;
+}
+export const getPersonaRows = () =>
+  api.get<{ items: PersonaRow[] }>("/integrations/persona");
+export const getStripeRows = () =>
+  api.get<{ items: StripeRow[] }>("/integrations/stripe");
 
 export interface SyncCounts {
   created: number;

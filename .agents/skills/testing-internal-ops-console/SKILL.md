@@ -24,21 +24,22 @@ Health check: `http://localhost:8000/api/health`.
 No passwords — dev-only signed-cookie session with a top-right user switcher. Seeded users:
 - `admin@example.com` ADMIN — everything (prod flag writes, unlimited refunds)
 - `ops@example.com` OPS_REVIEWER — KYC review, refunds ≤ $2,000, non-prod flag writes (NO prod)
-- `support@example.com` SUPPORT_AGENT — refunds ≤ $250, feature_flag:read only. **No `kyc:read`** — KYC queue is empty for support (spec text claiming support reads KYC is inaccurate vs code).
-- `readonly@example.com` READ_ONLY — read KYC/refunds/flags/audit; no writes.
+- `support@example.com` SUPPORT_AGENT — read KYC, refunds ≤ $250, feature_flag:read.
+- `readonly@example.com` READ_ONLY — read KYC/refunds/flags; no writes.
+
+There is no user-facing Audit page (audit events are still written under the hood, but there is no read API/tab).
 
 Ground truth for RBAC: `backend/app/permissions.py` (`ROLE_PERMISSIONS`, `REFUND_LIMIT_MINOR`).
 
 ## Key business rules (all enforced server-side; UI disabling is supplementary)
 - **KYC** (`kyc_service.py`): decisions only from NEEDS_REVIEW; reject requires a reason from a fixed set. Detail page disables Approve/Reject/Assign for non-reviewers + shows a view-only banner.
-- **Refunds** (`refund_service.py`): refundable from SUCCEEDED/PARTIALLY_REFUNDED; partial vs full recalculates status; role limit enforced (support 25000 minor = $250). Provider IDs ending `FAIL` deterministically fail — seed `pay_007` = `pi_mock_0007_FAIL` (MOCK_PROVIDER). A failed refund consumes no balance and payment stays SUCCEEDED.
+- **Refunds** (`refund_service.py`): refundable from SUCCEEDED/PARTIALLY_REFUNDED; partial vs full recalculates status; role limit enforced (support 25000 minor = $250). Provider IDs ending `FAIL` deterministically fail — the seeded Stripe charge with `payment_intent = pi_stripe_0007_FAIL` already carries a seeded failed refund. A failed refund consumes no balance and payment stays SUCCEEDED.
 - **Feature flags** (`feature_flag_service.py`): new flags start disabled everywhere at v1/0%. Rollout slider disabled while flag is off. PRODUCTION writes require `feature_flag:write_prod` + a non-empty reason (UI "Confirm production change" dialog; Apply disabled until reason typed). Non-prod needs `feature_flag:write_nonprod`. Optimistic concurrency via `expected_version` (v increments each save). List shows `On · N%`.
 
 ## Testing tips
-- Good full-balance SUCCEEDED payments for refund tests: `pay_018` ($1,999), `pay_030` ($1,999, use for support-limit test).
+- For refund tests, pick any SUCCEEDED payment with a full remaining balance from the Refunds list (amounts/ids are seeded deterministically but not fixed by name here).
 - Feature flag create form: key/description/owner/comma-separated tags; lands on detail page.
-- Audit tab supports entity-type filter (KycCase/Refund/FeatureFlag) and per-row Details showing before/after JSON.
-- Integrations tab: 3 mock sources (Persona/Stripe/LaunchDarkly) with sub-tab data tables.
+- Integrations tab: two connected sources (Persona for KYC, Stripe for payments). Each shows a health card (status, last synced, next sync) plus a table of recent synced rows; ADMIN/OPS get a "Sync now" button. Feature flags are console-owned with no integration source.
 
 ## Devin Secrets Needed
 None — all auth is local dev seeded users; no external API keys required.

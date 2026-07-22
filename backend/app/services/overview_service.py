@@ -3,7 +3,6 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models.audit import AuditEvent
 from app.models.enums import (
     FeatureFlagEnvironment,
     KycStatus,
@@ -13,7 +12,6 @@ from app.models.enums import (
 from app.models.feature_flag import FeatureFlagValue, FeatureFlagVersion
 from app.models.kyc import KycCase
 from app.models.payment import Refund
-from app.serializers import audit_row
 
 
 def _start_of_today() -> datetime:
@@ -67,14 +65,6 @@ def get_overview(db: Session) -> dict:
         .where(FeatureFlagVersion.created_at >= week_ago)
     )
 
-    recent_audit = (
-        db.execute(
-            select(AuditEvent).order_by(AuditEvent.created_at.desc()).limit(10)
-        )
-        .scalars()
-        .all()
-    )
-
     return {
         "kyc_awaiting_review": awaiting_review or 0,
         "kyc_high_risk": high_risk or 0,
@@ -82,5 +72,4 @@ def get_overview(db: Session) -> dict:
         "failed_refunds": failed_refunds or 0,
         "prod_flags_enabled": prod_flags_enabled or 0,
         "prod_flag_changes_last_7d": prod_changes_week or 0,
-        "recent_audit": [audit_row(e) for e in recent_audit],
     }

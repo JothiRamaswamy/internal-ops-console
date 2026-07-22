@@ -5,7 +5,7 @@ built as a demonstration of what a small team can own themselves using Devin.
 It bundles the three internal apps a Series C fintech actually uses into one
 console:
 
-- **KYC Review Queue** — triage identity-verification cases from a KYC vendor,
+- **KYC Review Queue** — triage identity-verification cases from Persona,
   approve / reject / request-more-info with full audit history.
 - **Refunds Dashboard** — search payments and issue full/partial refunds with
   role-based limits, idempotency, and provider-failure handling.
@@ -13,10 +13,11 @@ console:
   per-environment enable/disable, rollout percentages, and targeting filters.
 
 It also ships **integration source tables** representing the external data
-sources this product connects to (Persona, Stripe, LaunchDarkly). A
+sources this product connects to (Persona for KYC, Stripe for payments). A
 **sync/ETL layer** reads those raw vendor rows and normalizes them into the
 domain tables (KYC cases + events, payments), so the whole thing runs end-to-end
-with realistic seeded data and no external credentials.
+with realistic seeded data and no external credentials. Feature flags are
+console-owned and have no integration source.
 
 > See [`RECOMMENDATION.md`](./RECOMMENDATION.md) for the build-vs-buy analysis
 > this repository was created to support.
@@ -34,7 +35,11 @@ internal-ops-console/
 
 - **Database:** PostgreSQL 16.
 - **Backend:** FastAPI with a service/domain layer holding all business rules;
-  server-side RBAC; money stored as integer minor units; immutable audit log.
+  server-side RBAC; money stored as integer minor units; an immutable audit log
+  is written for every mutation.
+- **Integrations:** two connected sources — Persona (KYC) and Stripe (payments).
+  The Integrations tab shows each connector's health, sync freshness, and a
+  sample of recently-synced rows.
 - **Frontend:** React SPA that talks to the API over a same-origin `/api` proxy
   with cookie sessions. Business logic stays on the server.
 - **Auth:** development-only signed-cookie session with a seeded user switcher

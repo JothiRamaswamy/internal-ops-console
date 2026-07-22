@@ -8,7 +8,7 @@ tables (the raw vendor mirrors), then runs the sync/ETL layer to normalize them
 into the domain tables (`kyc_cases` + events, `payments`). Operator-owned data —
 KYC review decisions and in-console refunds — is layered on *after* the sync,
 because it originates inside the console rather than from a vendor. Feature flags
-are console-owned too; LaunchDarkly is seeded only as a read-only mirror.
+are console-owned and have no integration source.
 """
 
 import random
@@ -25,7 +25,6 @@ from app.models import (
     FeatureFlag,
     FeatureFlagValue,
     FeatureFlagVersion,
-    IntegrationLaunchDarklyFlag,
     IntegrationPersonaInquiry,
     IntegrationStripeCharge,
     KycCase,
@@ -74,7 +73,7 @@ def clear(db: Session) -> None:
         AuditEvent, KycCaseEvent, KycCase, Refund, Payment,
         FeatureFlagVersion, FeatureFlagValue, FeatureFlag,
         IntegrationPersonaInquiry, IntegrationStripeCharge,
-        IntegrationLaunchDarklyFlag, Customer, User,
+        Customer, User,
     ):
         db.execute(delete(model))
     db.commit()
@@ -174,7 +173,7 @@ def seed_stripe_source(db: Session, customers) -> None:
         customer = RNG.choice(customers)
         amount = RNG.choice([1999, 4999, 9900, 12500, 25000, 45000, 199900, 250000])
         created = _dt(RNG.uniform(0.1, 60))
-        currency = "usd" if i % 8 else RNG.choice(["eur", "gbp"])
+        currency = "usd"
         status = "succeeded"
         if i in (2, 5):
             status = "disputed"
@@ -205,25 +204,6 @@ def seed_stripe_source(db: Session, customers) -> None:
                 "payment_method_details": {"card": {"brand": brand, "last4": last4}},
                 "metadata": {"order_id": f"ORD-{10000 + i}"},
             },
-        ))
-    db.commit()
-
-
-def seed_launchdarkly_source(db: Session) -> None:
-    """Seed LaunchDarkly flags as a read-only mirror (not synced into domain)."""
-    for _i, (key, desc, owner, tags) in enumerate(FLAG_SPECS):
-        db.add(IntegrationLaunchDarklyFlag(
-            flag_key=key,
-            name=desc,
-            kind="boolean",
-            temporary=("beta" in tags or "deprecated" in tags),
-            maintainer=f"{owner}@example.com",
-            tags={"tags": tags},
-            environments={
-                "production": {"on": RNG.random() < 0.4},
-                "staging": {"on": RNG.random() < 0.5},
-            },
-            raw={"key": key, "name": desc},
         ))
     db.commit()
 
@@ -294,57 +274,97 @@ def seed_kyc_decisions(db: Session, users) -> None:
     db.commit()
 
 
+def _refund_at(payment_created: datetime) -> datetime:
+    """A refund time shortly after the payment, never in the future."""
+    latest = min(NOW, payment_created + timedelta(days=3))
+    if latest <= payment_created:
+        return payment_created + timedelta(hours=2)
+    span = (latest - payment_created).total_seconds()
+    return payment_created + timedelta(seconds=RNG.uniform(span * 0.1, span))
+
+
+def _requester_for(amount_minor: int, users) -> User:
+    """Pick a seed requester whose role limit actually covers the amount."""
+    if amount_minor <= 25_000:
+        return users["SUPPORT_AGENT"]
+    if amount_minor <= 200_000:
+        return users["OPS_REVIEWER"]
+    return users["ADMIN"]
+
+
 def seed_refunds(db: Session, users) -> None:
-    """Create in-console refunds against synced, succeeded payments."""
+    """Create in-console refunds against synced, succeeded payments.
+
+    Refunds are operator-owned: they set the payment status, record an audit
+    event, and reconcile the vendor snapshot's ``amount_refunded`` (as the next
+    sync would once the provider reports the refund).
+    """
+    charges = {
+        (c.payment_intent or c.charge_id): c
+        for c in db.scalars(select(IntegrationStripeCharge)).all()
+    }
     payments = db.scalars(
         select(Payment)
         .where(Payment.status == PaymentStatus.SUCCEEDED)
         .order_by(Payment.provider_payment_id)
     ).all()
     for i, p in enumerate(payments):
+        charge = charges.get(p.provider_payment_id)
         if p.provider_payment_id.endswith("FAIL"):
             # A refund attempt the provider declined — no balance consumed.
+            requester = users["SUPPORT_AGENT"]
             db.add(Refund(
                 payment_id=p.id, amount_minor=min(p.amount_minor, 5000),
                 currency=p.currency, reason=RefundReason.CUSTOMER_REQUEST,
                 status=RefundStatus.FAILED,
                 failure_reason="Provider declined the refund (simulated failure).",
-                requested_by_id=users["SUPPORT_AGENT"].id,
+                requested_by_id=requester.id,
                 idempotency_key=f"seed-refund-{i}-failed",
-                created_at=p.created_at + timedelta(days=1),
+                created_at=_refund_at(p.created_at),
             ))
             continue
         if i % 5 == 0:
             # Full refund.
+            refunded_at = _refund_at(p.created_at)
+            requester = _requester_for(p.amount_minor, users)
             db.add(Refund(
                 payment_id=p.id, amount_minor=p.amount_minor, currency=p.currency,
                 reason=RefundReason.DUPLICATE_CHARGE, status=RefundStatus.SUCCEEDED,
-                requested_by_id=users["ADMIN"].id,
+                requested_by_id=requester.id,
                 idempotency_key=f"seed-refund-{i}-full",
                 provider_refund_id=f"re_seed_{i}f",
-                created_at=p.created_at + timedelta(days=1),
+                created_at=refunded_at,
             ))
             p.status = PaymentStatus.FULLY_REFUNDED
+            if charge is not None:
+                charge.amount_refunded = p.amount_minor
+            db.add(AuditEvent(
+                actor_id=requester.id, action="REFUND_SUCCEEDED",
+                entity_type="Refund", entity_id=p.id,
+                after={"amount_minor": p.amount_minor, "type": "full"},
+                created_at=refunded_at,
+            ))
         elif i % 3 == 0:
             # Partial refund.
             r_amt = p.amount_minor // RNG.choice([2, 3, 4])
+            refunded_at = _refund_at(p.created_at)
+            requester = _requester_for(r_amt, users)
             db.add(Refund(
                 payment_id=p.id, amount_minor=r_amt, currency=p.currency,
                 reason=RNG.choice(list(RefundReason)), status=RefundStatus.SUCCEEDED,
-                requested_by_id=(
-                    users["SUPPORT_AGENT"].id if r_amt <= 25000
-                    else users["OPS_REVIEWER"].id
-                ),
+                requested_by_id=requester.id,
                 idempotency_key=f"seed-refund-{i}-a",
                 provider_refund_id=f"re_seed_{i}a",
-                created_at=p.created_at + timedelta(days=1),
+                created_at=refunded_at,
             ))
             p.status = PaymentStatus.PARTIALLY_REFUNDED
+            if charge is not None:
+                charge.amount_refunded = r_amt
             db.add(AuditEvent(
-                actor_id=users["SUPPORT_AGENT"].id, action="REFUND_SUCCEEDED",
+                actor_id=requester.id, action="REFUND_SUCCEEDED",
                 entity_type="Refund", entity_id=p.id,
-                after={"amount_minor": r_amt},
-                created_at=p.created_at + timedelta(days=1),
+                after={"amount_minor": r_amt, "type": "partial"},
+                created_at=refunded_at,
             ))
     db.commit()
 
@@ -463,9 +483,15 @@ def main() -> None:
         # 1. Land raw vendor records in the integration source tables.
         seed_persona_source(db, customers)
         seed_stripe_source(db, customers)
-        seed_launchdarkly_source(db)
         # 2. Run the sync/ETL: integration_* -> normalized domain tables.
         sync_summary = sync_service.sync_all(db)
+        # Record the sync so the Integrations health page has a "last synced".
+        db.add(AuditEvent(
+            actor_id=users["ADMIN"].id, action="INTEGRATION_SYNCED",
+            entity_type="Integration", entity_id="all",
+            after=sync_summary, created_at=NOW - timedelta(minutes=6),
+        ))
+        db.commit()
         # 3. Layer on operator-owned data that originates in the console.
         seed_kyc_decisions(db, users)
         seed_refunds(db, users)

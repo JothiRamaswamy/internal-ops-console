@@ -4,7 +4,6 @@ import {
   ShieldCheck,
   Receipt,
   Flag,
-  ScrollText,
   Plug,
   Search,
 } from "lucide-react";
@@ -16,7 +15,6 @@ const NAV = [
   { to: "/kyc", label: "KYC Reviews", icon: ShieldCheck },
   { to: "/refunds", label: "Refunds", icon: Receipt },
   { to: "/feature-flags", label: "Feature Flags", icon: Flag },
-  { to: "/audit", label: "Audit Log", icon: ScrollText },
   { to: "/integrations", label: "Integrations", icon: Plug },
 ];
 
@@ -25,7 +23,6 @@ const TITLES: Record<string, string> = {
   "/kyc": "KYC Review Queue",
   "/refunds": "Refunds Dashboard",
   "/feature-flags": "Feature Flags",
-  "/audit": "Audit Log",
   "/integrations": "Integrations",
 };
 

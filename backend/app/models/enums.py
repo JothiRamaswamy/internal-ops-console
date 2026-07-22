@@ -20,8 +20,6 @@ class KycStatus(str, enum.Enum):
 
 class KycVendor(str, enum.Enum):
     PERSONA = "PERSONA"
-    STRIPE_IDENTITY = "STRIPE_IDENTITY"
-    MOCK_VENDOR = "MOCK_VENDOR"
 
 
 class RiskLevel(str, enum.Enum):

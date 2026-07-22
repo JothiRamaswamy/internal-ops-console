@@ -111,7 +111,7 @@
           <pre class="mermaid">
 flowchart TB
     subgraph Browser["Browser — React SPA (Vite + TS + Tailwind)"]
-        UI["AppShell + tabs:\nOverview · KYC · Refunds · Feature Flags · Audit · Integrations"]
+        UI["AppShell + tabs:\nOverview · KYC · Refunds · Feature Flags · Integrations"]
         RQ["TanStack Query\n(server cache, mutations)"]
         UI --> RQ
     end
@@ -119,7 +119,7 @@ flowchart TB
     RQ -->|"/api/* · fetch, cookie session"| API
 
     subgraph Backend["Python backend — FastAPI"]
-        API["Routers (thin)\nauth · kyc · refunds · feature-flags · audit · overview · integrations"]
+        API["Routers (thin)\nauth · kyc · refunds · feature-flags · overview · integrations"]
         AUTH["Auth + RBAC\nsigned cookie · permissions.py"]
         SVC["Service / domain layer\n(all business rules + state machines)"]
         AUD["Audit service\n(immutable events)"]
@@ -135,11 +135,11 @@ flowchart TB
     AUD --> DB
 
     subgraph Data["PostgreSQL 16"]
-        INT[("Integration source tables\nintegration_persona_inquiries\nintegration_stripe_charges\nintegration_launchdarkly_flags")]
+        INT[("Integration source tables\nintegration_persona_inquiries\nintegration_stripe_charges")]
         DB[("Normalized domain tables\nusers · customers · kyc_cases(+events) · payments · refunds\nfeature_flags(+values,+versions) · audit_events")]
     end
 
-    EXT["External vendors\nPersona · Stripe · LaunchDarkly / Adyen"] -.->|"inbound pull (prod)\ntoday: seeded"| INT
+    EXT["External vendors\nPersona (KYC) · Stripe (payments)"] -.->|"inbound pull (prod)\ntoday: seeded"| INT
     INT -->|"read raw rows"| SYNC
     SYNC -->|"normalize → upsert (idempotent)"| DB
     SVC -.->|"outbound: refund / request-info (write-back)"| EXT
@@ -560,14 +560,13 @@ erDiagram
                 <td>Stripe charges (payments/refunds source).</td>
                 <td>Unique <code>charge_id</code>, <code>payment_intent</code>, <code>amount</code>/<code>amount_refunded</code>, <code>currency</code>, <code>status</code>, card brand/last4, <code>raw</code>.</td>
               </tr>
-              <tr>
-                <td><code>integration_launchdarkly_flags</code></td>
-                <td>LaunchDarkly flags (feature-flag source).</td>
-                <td>Unique <code>flag_key</code>, <code>name</code>, <code>kind</code>, <code>temporary</code>, <code>maintainer</code>, per-env <code>environments</code> (JSONB), <code>raw</code>.</td>
-              </tr>
             </tbody>
           </table>
         </div>
+        <p class="muted">
+          Feature flags are <b>console-owned</b> — they have no integration source
+          and are authored directly in the console.
+        </p>
       </section>
 
       <section>
@@ -575,13 +574,13 @@ erDiagram
         <div class="card" style="overflow-x:auto">
           <table>
             <thead>
-              <tr><th>Role</th><th>KYC</th><th>Refunds</th><th>Feature flags</th><th>Audit</th></tr>
+              <tr><th>Role</th><th>KYC</th><th>Refunds</th><th>Feature flags</th></tr>
             </thead>
             <tbody>
-              <tr><td><b>ADMIN</b></td><td>read + review</td><td>unlimited</td><td>read + non-prod + prod</td><td>read</td></tr>
-              <tr><td><b>OPS_REVIEWER</b></td><td>read + review</td><td>≤ $2,000</td><td>read + non-prod</td><td>read</td></tr>
-              <tr><td><b>SUPPORT_AGENT</b></td><td>read</td><td>≤ $250</td><td>read</td><td>—</td></tr>
-              <tr><td><b>READ_ONLY</b></td><td>read</td><td>—</td><td>read</td><td>read</td></tr>
+              <tr><td><b>ADMIN</b></td><td>read + review</td><td>unlimited</td><td>read + non-prod + prod</td></tr>
+              <tr><td><b>OPS_REVIEWER</b></td><td>read + review</td><td>≤ $2,000</td><td>read + non-prod</td></tr>
+              <tr><td><b>SUPPORT_AGENT</b></td><td>read</td><td>≤ $250</td><td>read</td></tr>
+              <tr><td><b>READ_ONLY</b></td><td>read</td><td>—</td><td>read</td></tr>
             </tbody>
           </table>
         </div>
