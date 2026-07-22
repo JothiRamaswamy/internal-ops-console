@@ -210,6 +210,27 @@ def seed_stripe_source(db: Session, customers) -> None:
 
 # --- Operator-owned data (layered on AFTER the sync) --------------------------
 
+KYC_APPROVE_NOTES = [
+    "Document and selfie match; no watchlist hits. Approved.",
+    "Address verified against utility bill on file. Cleared.",
+    "Low risk score and clean checks — approved without escalation.",
+    "Re-reviewed after resubmission; documents now legible. Approved.",
+]
+
+KYC_REJECT_NOTES = {
+    "IDENTITY_MISMATCH": "Name on ID does not match the account holder.",
+    "SUSPECTED_FRAUD": "Multiple signals of synthetic identity; escalated and rejected.",
+    "WATCHLIST_MATCH": "Confirmed sanctions/watchlist hit; cannot onboard.",
+    "DOCUMENT_UNVERIFIABLE": "ID photo blurred and glare-obscured; unverifiable.",
+}
+
+KYC_MORE_INFO_NOTES = [
+    "Requested a clearer photo of the back of the ID.",
+    "Selfie failed liveness; asked the customer to retake it.",
+    "Need a proof-of-address document to confirm residency.",
+]
+
+
 def seed_kyc_decisions(db: Session, users) -> None:
     """Simulate historical reviewer decisions on synced NEEDS_REVIEW cases."""
     reviewers = [users["ADMIN"], users["OPS_REVIEWER"]]
@@ -228,7 +249,7 @@ def seed_kyc_decisions(db: Session, users) -> None:
             case.status = KycStatus.APPROVED
             case.decided_by_id = reviewer.id
             case.decided_at = decided_at
-            case.decision_note = "Verified during review."
+            case.decision_note = RNG.choice(KYC_APPROVE_NOTES)
             db.add(KycCaseEvent(
                 kyc_case_id=case.id, actor_id=reviewer.id,
                 event_type="KYC_CASE_APPROVED",
@@ -249,7 +270,7 @@ def seed_kyc_decisions(db: Session, users) -> None:
             case.decided_by_id = reviewer.id
             case.decided_at = decided_at
             case.decision_reason = reason
-            case.decision_note = "Rejected during review."
+            case.decision_note = KYC_REJECT_NOTES[reason]
             db.add(KycCaseEvent(
                 kyc_case_id=case.id, actor_id=reviewer.id,
                 event_type="KYC_CASE_REJECTED",
@@ -264,6 +285,7 @@ def seed_kyc_decisions(db: Session, users) -> None:
             ))
         else:  # more_info
             case.status = KycStatus.REQUESTED_MORE_INFO
+            case.decision_note = RNG.choice(KYC_MORE_INFO_NOTES)
             db.add(KycCaseEvent(
                 kyc_case_id=case.id, actor_id=reviewer.id,
                 event_type="KYC_MORE_INFO_REQUESTED",
@@ -292,6 +314,26 @@ def _requester_for(amount_minor: int, users) -> User:
     return users["ADMIN"]
 
 
+FULL_REFUND_NOTES = [
+    "Customer charged twice for the same order; refunding the duplicate.",
+    "Order canceled before fulfillment — full refund approved.",
+    "Goodwill full refund after repeated shipping delays.",
+    "Chargeback avoided; refunded in full per customer request.",
+]
+
+PARTIAL_REFUND_NOTES = [
+    "Refunded shipping only; item was delivered late.",
+    "Partial credit for the damaged item in the order.",
+    "Prorated refund for the unused portion of the subscription.",
+    "Refunded one of two seats per the customer's request.",
+    "Courtesy partial refund to resolve the support ticket.",
+]
+
+FAILED_REFUND_NOTE = (
+    "Attempted refund for a reported duplicate charge; provider declined."
+)
+
+
 def seed_refunds(db: Session, users) -> None:
     """Create in-console refunds against synced, succeeded payments.
 
@@ -317,6 +359,7 @@ def seed_refunds(db: Session, users) -> None:
                 payment_id=p.id, amount_minor=min(p.amount_minor, 5000),
                 currency=p.currency, reason=RefundReason.CUSTOMER_REQUEST,
                 status=RefundStatus.FAILED,
+                note=FAILED_REFUND_NOTE,
                 status_note="Refund failed at the provider; no funds were moved.",
                 failure_reason="Provider declined the refund (simulated failure).",
                 requested_by_id=requester.id,
@@ -331,6 +374,7 @@ def seed_refunds(db: Session, users) -> None:
             db.add(Refund(
                 payment_id=p.id, amount_minor=p.amount_minor, currency=p.currency,
                 reason=RefundReason.DUPLICATE_CHARGE, status=RefundStatus.SUCCEEDED,
+                note=RNG.choice(FULL_REFUND_NOTES),
                 status_note="Full refund processed; payment fully refunded.",
                 requested_by_id=requester.id,
                 idempotency_key=f"seed-refund-{i}-full",
@@ -354,6 +398,7 @@ def seed_refunds(db: Session, users) -> None:
             db.add(Refund(
                 payment_id=p.id, amount_minor=r_amt, currency=p.currency,
                 reason=RNG.choice(list(RefundReason)), status=RefundStatus.SUCCEEDED,
+                note=RNG.choice(PARTIAL_REFUND_NOTES),
                 status_note=(
                     "Partial refund processed; "
                     f"${(p.amount_minor - r_amt) / 100:,.2f} still refundable."

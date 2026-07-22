@@ -200,6 +200,7 @@ export function PaymentDetailPage() {
                 <th className="th">Amount</th>
                 <th className="th">Reason</th>
                 <th className="th">Status</th>
+                <th className="th">Notes</th>
                 <th className="th">Requested by</th>
                 <th className="th">Created</th>
                 <th className="th">Provider ref</th>
@@ -226,6 +227,7 @@ export function PaymentDetailPage() {
                       </div>
                     )}
                   </td>
+                  <td className="td max-w-xs text-slate-600">{r.note ?? "—"}</td>
                   <td className="td">{r.requested_by?.name}</td>
                   <td className="td text-slate-500">
                     {formatDateTime(r.created_at)}
