@@ -76,6 +76,42 @@ bind localhost only.
 - Health check: `GET http://localhost:8000/api/health`
 - Interactive docs: `http://localhost:8000/docs`
 
+## Feature-flag SDK
+
+`app/sdk` is a small, dependency-free library for evaluating flags in
+application code. Given a flag's stored config and an evaluation *context* (a
+JSON object describing the caller), it returns whether the flag is on. A flag is
+ON when it is `enabled`, **every** targeting filter matches the context, and the
+context falls inside the rollout bucket. Percentage rollout is deterministic
+(hash of `flag_key` + an identity from the context), so it's sticky per user.
+
+```python
+from app.sdk import evaluate, is_enabled, FeatureFlagClient
+
+config = {
+    "enabled": True,
+    "rollout_percentage": 50,
+    "filters": [{"property": "plan", "operator": "equals", "value": "enterprise"}],
+}
+context = {"distinct_id": "user-42", "plan": "enterprise"}
+
+is_enabled(config, context, flag_key="new-billing")        # -> True/False
+evaluate(config, context, flag_key="new-billing").reason   # human-readable why
+
+# Or hold a snapshot of {flag_key: config} and evaluate by key:
+client = FeatureFlagClient({"new-billing": config})
+client.is_enabled("new-billing", context)
+```
+
+Supported filter operators: `equals`, `not_equals`, `contains`, `in`. The
+rollout identity is read from the context (`distinct_id` by default, then
+`user_id`/`id`/…), or pass `bucket_by="account_id"` to bucket by another
+property.
+
+The same logic backs `POST /api/feature-flags/{flag_id}/evaluate` (body:
+`{environment, context, bucket_by?}`), which the flag detail page's "Evaluate
+(SDK preview)" panel calls — so the console preview matches production behavior.
+
 ## Project layout
 
 ```
@@ -93,6 +129,7 @@ app/
 ├── services/          business logic: kyc, refund, feature_flag, audit, overview, sync (ETL)
 │                       (audit is written for every mutation; there is no audit read API)
 ├── sync.py            CLI entrypoint for the integration sync/ETL
+├── sdk/               dependency-free feature-flag evaluation SDK (filters + rollout %)
 ├── providers/         Persona KYC + Stripe payment adapters + normalization (mock + real stubs)
 └── routers/           HTTP endpoints
 ```

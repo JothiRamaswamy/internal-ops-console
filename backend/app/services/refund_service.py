@@ -147,6 +147,13 @@ def create_refund(
         refund.provider_refund_id = result.provider_refund_id
         db.flush()
         _recalculate_payment_status(db, payment)
+        remaining = remaining_refundable_minor(payment)
+        if payment.status == PaymentStatus.FULLY_REFUNDED:
+            refund.status_note = "Full refund processed; payment fully refunded."
+        else:
+            refund.status_note = (
+                f"Partial refund processed; ${remaining / 100:,.2f} still refundable."
+            )
         record_audit(
             db,
             actor_id=user.id,
@@ -161,6 +168,7 @@ def create_refund(
     else:
         refund.status = RefundStatus.FAILED
         refund.failure_reason = result.failure_reason
+        refund.status_note = "Refund failed at the provider; no funds were moved."
         record_audit(
             db,
             actor_id=user.id,

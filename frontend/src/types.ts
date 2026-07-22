@@ -59,6 +59,7 @@ export interface Refund {
   reason: string;
   note: string | null;
   status: string;
+  status_note: string | null;
   failure_reason: string | null;
   provider_refund_id: string | null;
   requested_by: UserSummary | null;

@@ -92,6 +92,7 @@ def refund_row(r: Refund) -> dict[str, Any]:
         "reason": r.reason.value,
         "note": r.note,
         "status": r.status.value,
+        "status_note": r.status_note,
         "failure_reason": r.failure_reason,
         "provider_refund_id": r.provider_refund_id,
         "requested_by": user_summary(r.requested_by),

@@ -52,6 +52,7 @@ class Refund(IdMixin, TimestampMixin, Base):
     reason: Mapped[RefundReason] = mapped_column(refund_reason_enum, nullable=False)
     note: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     status: Mapped[RefundStatus] = mapped_column(refund_status_enum, nullable=False)
+    status_note: Mapped[str | None] = mapped_column(String(500), nullable=True)
     failure_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
     requested_by_id: Mapped[str] = mapped_column(
         ForeignKey("users.id"), nullable=False

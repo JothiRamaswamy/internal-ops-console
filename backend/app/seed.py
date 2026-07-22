@@ -317,6 +317,7 @@ def seed_refunds(db: Session, users) -> None:
                 payment_id=p.id, amount_minor=min(p.amount_minor, 5000),
                 currency=p.currency, reason=RefundReason.CUSTOMER_REQUEST,
                 status=RefundStatus.FAILED,
+                status_note="Refund failed at the provider; no funds were moved.",
                 failure_reason="Provider declined the refund (simulated failure).",
                 requested_by_id=requester.id,
                 idempotency_key=f"seed-refund-{i}-failed",
@@ -330,6 +331,7 @@ def seed_refunds(db: Session, users) -> None:
             db.add(Refund(
                 payment_id=p.id, amount_minor=p.amount_minor, currency=p.currency,
                 reason=RefundReason.DUPLICATE_CHARGE, status=RefundStatus.SUCCEEDED,
+                status_note="Full refund processed; payment fully refunded.",
                 requested_by_id=requester.id,
                 idempotency_key=f"seed-refund-{i}-full",
                 provider_refund_id=f"re_seed_{i}f",
@@ -352,6 +354,10 @@ def seed_refunds(db: Session, users) -> None:
             db.add(Refund(
                 payment_id=p.id, amount_minor=r_amt, currency=p.currency,
                 reason=RNG.choice(list(RefundReason)), status=RefundStatus.SUCCEEDED,
+                status_note=(
+                    "Partial refund processed; "
+                    f"${(p.amount_minor - r_amt) / 100:,.2f} still refundable."
+                ),
                 requested_by_id=requester.id,
                 idempotency_key=f"seed-refund-{i}-a",
                 provider_refund_id=f"re_seed_{i}a",

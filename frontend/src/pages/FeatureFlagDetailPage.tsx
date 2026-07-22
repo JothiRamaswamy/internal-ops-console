@@ -217,6 +217,124 @@ function EnvEditor({
   );
 }
 
+interface EvalResult {
+  flag_key: string;
+  environment: string;
+  enabled: boolean;
+  reason: string;
+}
+
+function FlagEvaluator({ flagId }: { flagId: string }) {
+  const [env, setEnv] = useState<string>("PRODUCTION");
+  const [contextText, setContextText] = useState(
+    '{\n  "distinct_id": "user-123",\n  "plan": "enterprise"\n}',
+  );
+  const [jsonError, setJsonError] = useState<string | null>(null);
+
+  const evaluate = useMutation({
+    mutationFn: (payload: { environment: string; context: unknown }) =>
+      api.post<EvalResult>(`/feature-flags/${flagId}/evaluate`, payload),
+  });
+
+  const run = () => {
+    let context: unknown;
+    try {
+      context = JSON.parse(contextText);
+    } catch {
+      setJsonError("Context must be valid JSON.");
+      return;
+    }
+    if (typeof context !== "object" || context === null || Array.isArray(context)) {
+      setJsonError("Context must be a JSON object.");
+      return;
+    }
+    setJsonError(null);
+    evaluate.mutate({ environment: env, context });
+  };
+
+  const result = evaluate.data;
+
+  return (
+    <div className="card p-4">
+      <h3 className="text-sm font-semibold text-slate-800">
+        Evaluate (SDK preview)
+      </h3>
+      <p className="mt-1 text-xs text-slate-500">
+        Runs the same evaluation logic the SDK uses in application code: applies
+        the environment&apos;s targeting filters and rollout % to a context JSON.
+      </p>
+
+      <div className="mt-3 grid gap-3 md:grid-cols-2">
+        <div>
+          <label className="label">Environment</label>
+          <select
+            className="input"
+            value={env}
+            onChange={(e) => setEnv(e.target.value)}
+          >
+            {ENVS.map((e) => (
+              <option key={e} value={e}>
+                {titleCase(e)}
+              </option>
+            ))}
+          </select>
+          <label className="label mt-3">Context (JSON)</label>
+          <textarea
+            className="input font-mono text-xs"
+            rows={7}
+            value={contextText}
+            onChange={(e) => setContextText(e.target.value)}
+            spellCheck={false}
+          />
+          {jsonError && (
+            <p className="mt-1 text-xs text-red-500">{jsonError}</p>
+          )}
+          <button
+            className="btn-primary mt-3"
+            disabled={evaluate.isPending}
+            onClick={run}
+          >
+            {evaluate.isPending ? "Evaluating…" : "Evaluate"}
+          </button>
+        </div>
+
+        <div>
+          <label className="label">Result</label>
+          {result ? (
+            <div className="space-y-2">
+              <span
+                className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                  result.enabled
+                    ? "bg-green-100 text-green-700"
+                    : "bg-slate-200 text-slate-600"
+                }`}
+              >
+                <span
+                  className={`h-1.5 w-1.5 rounded-full ${
+                    result.enabled ? "bg-green-500" : "bg-slate-400"
+                  }`}
+                />
+                {result.enabled ? "ON — true" : "OFF — false"}
+              </span>
+              <p className="text-xs text-slate-500">{result.reason}</p>
+            </div>
+          ) : evaluate.isError ? (
+            <p className="text-xs text-red-500">
+              {evaluate.error instanceof ApiRequestError
+                ? evaluate.error.message
+                : "Evaluation failed."}
+            </p>
+          ) : (
+            <p className="text-xs text-slate-400">
+              Enter a context and evaluate to see the result.
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function FeatureFlagDetailPage() {
   const { id = "" } = useParams();
   const { can } = useAuth();
@@ -351,6 +469,8 @@ export function FeatureFlagDetailPage() {
           );
         })}
       </div>
+
+      <FlagEvaluator flagId={id} />
 
       <div className="card overflow-hidden">
         <h3 className="border-b border-slate-200 px-4 py-3 text-sm font-semibold text-slate-800">

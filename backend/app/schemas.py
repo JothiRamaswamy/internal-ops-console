@@ -41,6 +41,12 @@ class SetFlagValueRequest(BaseModel):
     reason: str | None = Field(default=None, max_length=1000)
 
 
+class EvaluateFlagRequest(BaseModel):
+    environment: FeatureFlagEnvironment
+    context: dict[str, Any] = Field(default_factory=dict)
+    bucket_by: str | None = Field(default=None, max_length=255)
+
+
 class CreateFlagRequest(BaseModel):
     key: str = Field(min_length=1, max_length=255)
     description: str = Field(default="", max_length=1000)
