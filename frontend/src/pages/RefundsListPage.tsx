@@ -138,7 +138,7 @@ export function RefundsListPage() {
                 <th className="th">Amount</th>
                 <th className="th">Refunded</th>
                 <th className="th">Remaining</th>
-                <th className="th">Status</th>
+                <th className="th">Payment status</th>
                 <th className="th">Created</th>
               </tr>
             </thead>
@@ -166,7 +166,10 @@ export function RefundsListPage() {
                     {formatMoney(p.remaining_refundable_minor, p.currency)}
                   </td>
                   <td className="td">
-                    <StatusBadge value={p.status} />
+                    <StatusBadge
+                      value={p.status}
+                      label={p.status === "SUCCEEDED" ? "Payment succeeded" : undefined}
+                    />
                   </td>
                   <td className="td text-slate-500">
                     {formatDateTime(p.created_at)}
