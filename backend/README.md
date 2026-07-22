@@ -22,6 +22,7 @@ createdb internal_ops
 cd backend
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
+cp ../.env.example ../.env                     # defaults work out of the box
 ```
 
 > The examples call each tool via `.venv/bin/...` so no activation is needed.
@@ -29,9 +30,10 @@ python3 -m venv .venv
 > `.venv\Scripts\activate`) and drop the `.venv/bin/` prefix from the commands
 > below.
 
-Configuration is read from a `.env` file at the repo root (see `../.env.example`).
-The defaults assume a local Postgres with a `postgres`/`postgres` role; edit
-`DATABASE_URL` to match your own credentials if they differ:
+Configuration is read from the `.env` file at the repo root (copied above from
+`../.env.example`). The defaults assume a local Postgres with a
+`postgres`/`postgres` role; edit `DATABASE_URL` to match your own credentials if
+they differ:
 
 ```
 DATABASE_URL=postgresql+psycopg2://postgres:postgres@localhost:5432/internal_ops
