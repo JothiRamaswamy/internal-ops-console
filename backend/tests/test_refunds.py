@@ -80,6 +80,27 @@ def test_payment_status_updates_and_audit(db, users, customer):
     assert "REFUND_SUCCEEDED" in actions
 
 
+def test_partial_refund_status_note_reports_correct_remaining(db, users, customer):
+    p = make_payment(db, customer, amount_minor=45000)
+    r = _create(db, p, users["ADMIN"], 5000)
+    assert r.status == RefundStatus.SUCCEEDED
+    # Remaining after a $50 refund on $450 is $400 — not the pre-refund $450.
+    assert r.status_note == "Partial refund processed; $400.00 still refundable."
+
+
+def test_second_partial_refund_status_note_reports_correct_remaining(db, users, customer):
+    p = make_payment(db, customer, amount_minor=45000)
+    _create(db, p, users["ADMIN"], 5000, key="k-first-0001")
+    r2 = _create(db, p, users["ADMIN"], 5000, key="k-second-001")
+    assert r2.status_note == "Partial refund processed; $350.00 still refundable."
+
+
+def test_full_refund_status_note(db, users, customer):
+    p = make_payment(db, customer, amount_minor=10000)
+    r = _create(db, p, users["ADMIN"], 10000)
+    assert r.status_note == "Full refund processed; payment fully refunded."
+
+
 def test_zero_amount_rejected(db, users, customer):
     p = make_payment(db, customer)
     with pytest.raises(AppError) as exc:
