@@ -220,6 +220,11 @@ export function PaymentDetailPage() {
                         {r.failure_reason}
                       </div>
                     )}
+                    {r.status_note && (
+                      <div className="text-xs text-slate-500">
+                        {r.status_note}
+                      </div>
+                    )}
                   </td>
                   <td className="td">{r.requested_by?.name}</td>
                   <td className="td text-slate-500">

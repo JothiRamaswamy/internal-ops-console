@@ -1,32 +1,76 @@
-import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
+import {
+  ShieldCheck,
+  Receipt,
+  Flag,
+  Plug,
+  ArrowRight,
+  type LucideIcon,
+} from "lucide-react";
 
-import { getOverview } from "@/api/queries";
-import { Loading, SummaryCard } from "@/components/ui";
-import { formatMoney } from "@/lib/format";
+type AppCard = {
+  to: string;
+  label: string;
+  description: string;
+  icon: LucideIcon;
+};
+
+const APPS: AppCard[] = [
+  {
+    to: "/kyc",
+    label: "KYC Reviews",
+    description: "Triage identity-verification cases and approve or reject them.",
+    icon: ShieldCheck,
+  },
+  {
+    to: "/refunds",
+    label: "Refunds",
+    description: "Issue full or partial refunds against payments, with role limits.",
+    icon: Receipt,
+  },
+  {
+    to: "/feature-flags",
+    label: "Feature Flags",
+    description: "Create flags and manage per-environment rollout and targeting.",
+    icon: Flag,
+  },
+  {
+    to: "/integrations",
+    label: "Integrations",
+    description: "Check sync health and browse recently synced vendor rows.",
+    icon: Plug,
+  },
+];
 
 export function OverviewPage() {
-  const { data, isLoading } = useQuery({
-    queryKey: ["overview"],
-    queryFn: getOverview,
-  });
-
-  if (isLoading || !data) return <Loading />;
-
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
-        <SummaryCard label="KYC awaiting review" value={data.kyc_awaiting_review} />
-        <SummaryCard label="KYC high-risk" value={data.kyc_high_risk} />
-        <SummaryCard
-          label="Refund volume today"
-          value={formatMoney(data.refund_volume_today_minor)}
-        />
-        <SummaryCard label="Failed refunds" value={data.failed_refunds} />
-        <SummaryCard label="Prod flags enabled" value={data.prod_flags_enabled} />
-        <SummaryCard
-          label="Prod changes (7d)"
-          value={data.prod_flag_changes_last_7d}
-        />
+      <p className="text-sm text-slate-500">
+        Choose an app to get started.
+      </p>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {APPS.map((app) => (
+          <Link
+            key={app.to}
+            to={app.to}
+            className="card group flex flex-col gap-3 p-5 transition hover:border-brand-300 hover:shadow-sm"
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex h-10 w-10 items-center justify-center rounded-md bg-brand-50 text-brand-700">
+                <app.icon className="h-5 w-5" />
+              </div>
+              <ArrowRight className="h-4 w-4 text-slate-300 transition group-hover:text-brand-500" />
+            </div>
+            <div>
+              <div className="text-sm font-semibold text-slate-800">
+                {app.label}
+              </div>
+              <div className="mt-1 text-xs text-slate-500">
+                {app.description}
+              </div>
+            </div>
+          </Link>
+        ))}
       </div>
     </div>
   );

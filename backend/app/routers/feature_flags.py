@@ -5,10 +5,11 @@ from sqlalchemy.orm import Session, selectinload
 from app.db import get_db
 from app.deps import client_ip, get_current_user
 from app.errors import AppError
-from app.models.feature_flag import FeatureFlag
+from app.models.feature_flag import FeatureFlag, FeatureFlagValue
 from app.models.user import User
 from app.permissions import require_permission
-from app.schemas import CreateFlagRequest, SetFlagValueRequest
+from app.schemas import CreateFlagRequest, EvaluateFlagRequest, SetFlagValueRequest
+from app.sdk import evaluate as evaluate_flag_config
 from app.serializers import flag_detail, flag_row
 from app.services import feature_flag_service
 
@@ -103,6 +104,47 @@ def set_value(
     )
     flag = db.get(FeatureFlag, flag_id)
     return flag_detail(flag)
+
+
+@router.post("/{flag_id}/evaluate")
+def evaluate(
+    flag_id: str,
+    body: EvaluateFlagRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Evaluate a flag against a context JSON, applying filters + rollout %.
+
+    Uses the same SDK logic (`app.sdk`) that application code would use, so the
+    console preview matches production behavior.
+    """
+    require_permission(user, "feature_flag:read")
+    flag = db.get(FeatureFlag, flag_id)
+    if not flag:
+        raise AppError("NOT_FOUND", f"Feature flag {flag_id} was not found.")
+
+    value_row = db.scalar(
+        select(FeatureFlagValue)
+        .where(FeatureFlagValue.flag_id == flag_id)
+        .where(FeatureFlagValue.environment == body.environment)
+    )
+    if value_row is None:
+        raise AppError(
+            "NOT_FOUND", f"No {body.environment.value} value exists for this flag."
+        )
+
+    result = evaluate_flag_config(
+        value_row.value,
+        body.context,
+        flag_key=flag.key,
+        bucket_by=body.bucket_by,
+    )
+    return {
+        "flag_key": flag.key,
+        "environment": body.environment.value,
+        "enabled": result.enabled,
+        "reason": result.reason,
+    }
 
 
 @router.post("/{flag_id}/archive")
