@@ -25,13 +25,19 @@ const STATUS_STYLES: Record<string, string> = {
   CANCELED: "bg-slate-100 text-slate-600",
 };
 
-export function StatusBadge({ value }: { value: string }) {
+export function StatusBadge({
+  value,
+  label,
+}: {
+  value: string;
+  label?: string;
+}) {
   const cls = STATUS_STYLES[value] ?? "bg-slate-100 text-slate-600";
   return (
     <span
       className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${cls}`}
     >
-      {titleCase(value)}
+      {label ?? titleCase(value)}
     </span>
   );
 }
