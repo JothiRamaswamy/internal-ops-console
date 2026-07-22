@@ -15,8 +15,11 @@ and query-string-driven filters.
 ```bash
 cd frontend
 npm install
-npm run dev            # http://localhost:5173
+npm run dev -- --host 0.0.0.0   # http://localhost:5173
 ```
+
+`--host 0.0.0.0` exposes the dev server on all interfaces (useful inside a
+container/VM); drop it to bind localhost only.
 
 The dev server proxies `/api` to the backend (configurable via
 `VITE_API_BASE_URL`, see `.env.example`), so cookies are same-origin and no CORS
@@ -29,7 +32,7 @@ you can do.
 ## Scripts
 
 ```bash
-npm run dev         # start dev server
+npm run dev         # start dev server (add `-- --host 0.0.0.0` to expose it)
 npm run build       # type-check (tsc -b) + production build to dist/
 npm run preview     # preview the production build
 npm run lint        # eslint

@@ -20,10 +20,14 @@ createdb internal_ops
 
 ```bash
 cd backend
-python -m venv .venv
-. .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
 ```
+
+> The examples call each tool via `.venv/bin/...` so no activation is needed.
+> If you prefer, activate once with `. .venv/bin/activate` (Windows:
+> `.venv\Scripts\activate`) and drop the `.venv/bin/` prefix from the commands
+> below.
 
 Configuration is read from a `.env` file at the repo root (see `../.env.example`).
 The defaults assume a local Postgres with a `postgres`/`postgres` role; edit
@@ -40,8 +44,8 @@ CORS_ORIGINS=http://localhost:5173
 
 ```bash
 # ensure the local Postgres is running and `internal_ops` exists (createdb internal_ops)
-alembic upgrade head        # apply migrations
-python -m app.seed          # load deterministic demo data (idempotent reset)
+.venv/bin/alembic upgrade head        # apply migrations
+.venv/bin/python -m app.seed          # load deterministic demo data (idempotent reset)
 ```
 
 `app.seed` wipes and reloads with a fixed random seed, so the data is identical
@@ -54,7 +58,7 @@ after.
 Run the sync on its own (idempotent — re-runnable for backfill/reconciliation):
 
 ```bash
-python -m app.sync          # integration_* source tables -> normalized domain
+.venv/bin/python -m app.sync          # integration_* source tables -> normalized domain
 ```
 
 It's also exposed at `POST /api/integrations/sync` (ADMIN / OPS_REVIEWER), which
@@ -63,8 +67,11 @@ the Integrations tab's "Sync now" button calls.
 ## Run
 
 ```bash
-uvicorn app.main:app --reload      # http://localhost:8000
+.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload   # http://localhost:8000
 ```
+
+`--host 0.0.0.0` binds all interfaces (useful inside a container/VM); omit it to
+bind localhost only.
 
 - Health check: `GET http://localhost:8000/api/health`
 - Interactive docs: `http://localhost:8000/docs`
@@ -124,9 +131,8 @@ Errors use a stable shape:
 ## Tests & lint
 
 ```bash
-. .venv/bin/activate
-ruff check app tests
-pytest
+.venv/bin/ruff check app tests
+.venv/bin/pytest
 ```
 
 Tests run against a `internal_ops_test` database (auto-created on the same

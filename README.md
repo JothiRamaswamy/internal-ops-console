@@ -68,18 +68,23 @@ psql -d postgres -c "ALTER USER postgres WITH PASSWORD 'postgres';" 2>/dev/null 
 
 # 2. Backend (see backend/README.md for details)
 cd backend
-python -m venv .venv && . .venv/bin/activate
-pip install -r requirements.txt
-cp ../.env.example ../.env          # defaults work out of the box
-alembic upgrade head                # create schema
-python -m app.seed                  # load demo data
-uvicorn app.main:app --reload       # http://localhost:8000
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+cp ../.env.example ../.env                     # defaults work out of the box
+.venv/bin/alembic upgrade head                 # create schema
+.venv/bin/python -m app.seed                   # load demo data
+.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload   # http://localhost:8000
 
 # 3. Frontend (in another terminal)
 cd frontend
 npm install
-npm run dev                         # http://localhost:5173
+npm run dev -- --host 0.0.0.0                  # http://localhost:5173
 ```
+
+> The `.venv/bin/...` calls run each tool from the virtualenv without needing to
+> activate it; if you prefer, run `. .venv/bin/activate` once and drop the
+> `.venv/bin/` prefix. `--host 0.0.0.0` binds the servers on all interfaces
+> (handy when running in a container/VM); drop it to bind localhost only.
 
 Open http://localhost:5173 and sign in as one of the seeded users to explore the
 different roles.
@@ -109,9 +114,9 @@ Swapping in real providers is an adapter implementation, not a rewrite.
 
 ```bash
 # backend
-cd backend && . .venv/bin/activate
-ruff check app tests
-pytest
+cd backend
+.venv/bin/ruff check app tests
+.venv/bin/pytest
 
 # frontend
 cd frontend
