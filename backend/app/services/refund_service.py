@@ -147,7 +147,7 @@ def create_refund(
         refund.provider_refund_id = result.provider_refund_id
         db.flush()
         _recalculate_payment_status(db, payment)
-        remaining = remaining_refundable_minor(payment)
+        remaining = max(payment.amount_minor - _refunded_minor_db(db, payment.id), 0)
         if payment.status == PaymentStatus.FULLY_REFUNDED:
             refund.status_note = "Full refund processed; payment fully refunded."
         else:
