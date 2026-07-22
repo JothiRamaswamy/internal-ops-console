@@ -10,11 +10,12 @@ Monorepo at repo root: `backend/` (FastAPI :8000), `frontend/` (Vite/React :5173
 ## Setup
 ```bash
 # Ensure local Postgres is running and the db exists: createdb internal_ops
-cd backend && python -m venv .venv && . .venv/bin/activate
-pip install -r requirements.txt
-alembic upgrade head && python -m app.seed  # seed is idempotent/deterministic
-uvicorn app.main:app --host 0.0.0.0 --port 8000
-cd frontend && npm install && npm run dev    # http://localhost:5173 (proxies /api → :8000)
+cd backend && python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+cp ../.env.example ../.env                              # defaults work out of the box
+.venv/bin/alembic upgrade head && .venv/bin/python -m app.seed  # seed is idempotent/deterministic
+.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+cd frontend && npm install && npm run dev -- --host 0.0.0.0  # http://localhost:5173 (proxies /api → :8000)
 ```
 Health check: `http://localhost:8000/api/health`.
 
